@@ -3,7 +3,7 @@
 /node_modules
 /build
 /tmp
-
+/.qodo
 # Logs
 logs
 *.log
