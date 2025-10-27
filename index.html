@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Quiz Interactif</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .header {
+      background-color: #4CAF50;
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .quiz-container {
+      background-color: white;
+      border-radius: 10px;
+      padding: 30px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    .progress {
+      background-color: #e0e0e0;
+      border-radius: 10px;
+      height: 10px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      background-color: #4CAF50;
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+    .question-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .theme {
+      background-color: #FF9800;
+      color: white;
+      padding: 5px 15px;
+      border-radius: 20px;
+      font-size: 14px;
+    }
+    .question-text {
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 25px;
+      color: #333;
+      line-height: 1.4;
+    }
+    .answer-option {
+      background-color: #f8f9fa;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      padding: 15px;
+      margin: 10px 0;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-size: 16px;
+    }
+    .answer-option:hover {
+      background-color: #e3f2fd;
+      border-color: #2196F3;
+    }
+    .answer-option.selected {
+      background-color: #2196F3;
+      color: white;
+      border-color: #1976D2;
+    }
+    .previous-answer {
+      background-color: #fff3cd;
+      border: 1px solid #ffeaa7;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+    .previous-answer.correct {
+      background-color: #d4edda;
+      border-color: #c3e6cb;
+    }
+    .previous-answer.incorrect {
+      background-color: #f8d7da;
+      border-color: #f5c6cb;
+    }
+    .submit-btn {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      font-size: 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 20px;
+      transition: background-color 0.3s;
+    }
+    .submit-btn:hover {
+      background-color: #45a049;
+    }
+    .submit-btn:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    .start-btn {
+      background-color: #2196F3;
+      color: white;
+      border: none;
+      padding: 20px 40px;
+      font-size: 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: block;
+      margin: 0 auto;
+    }
+    .results {
+      text-align: center;
+      padding: 30px;
+    }
+    .score {
+      font-size: 48px;
+      font-weight: bold;
+      color: #4CAF50;
+      margin-bottom: 20px;
+    }
+    .status {
+      padding: 15px;
+      border-radius: 8px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .status.connected {
+      background-color: #d4edda;
+      color: #155724;
+    }
+    .status.disconnected {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+    .watch-mode {
+      background-color: #ff5722;
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      text-align: center;
+      margin-bottom: 20px;
+      font-weight: bold;
+      animation: pulse 2s infinite;
+    }
+    .timer {
+      background-color: #2196F3;
+      color: white;
+      padding: 10px;
+      border-radius: 8px;
+      text-align: center;
+      margin-bottom: 15px;
+      font-size: 18px;
+      font-weight: bold;
+    }
+    .timer.warning {
+      background-color: #ff9800;
+      animation: pulse 1s infinite;
+    }
+    .timer.danger {
+      background-color: #f44336;
+      animation: pulse 0.5s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.7; }
+      100% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🎯 Quiz Interactif</h1>
+    <p>Répondez aux questions une par une</p>
+  </div>
+
+  <div id="status" class="status disconnected">Connexion en cours...</div>
+  
+  <div id="quiz-container" class="quiz-container">
+    <div id="start-screen">
+      <h2>Prêt à commencer le quiz ?</h2>
+      <div style="margin: 20px 0;">
+        <label>Thème (optionnel):</label><br>
+        <input type="text" id="theme-select" placeholder="Ex: Histoire, Science..." style="width: 100%; padding: 8px; margin: 5px 0;">
+      </div>
+      <div style="margin: 20px 0;">
+        <label>Nombre de questions:</label><br>
+        <input type="number" id="limit-input" value="10" min="1" max="50" style="width: 100%; padding: 8px; margin: 5px 0;">
+      </div>
+      <div style="margin: 20px 0;">
+        <label>Temps par question (secondes):</label><br>
+        <input type="number" id="time-input" value="30" min="5" max="120" style="width: 100%; padding: 8px; margin: 5px 0;">
+      </div>
+      <button class="start-btn" onclick="startQuiz()">🚀 Commencer le Quiz</button>
+    </div>
+
+    <div id="question-screen" style="display: none;">
+      <div class="progress">
+        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+      </div>
+      
+      <div id="previous-answer" class="previous-answer" style="display: none;">
+        <h4>Résultat de la question précédente :</h4>
+        <p id="previous-question"></p>
+        <p id="previous-result"></p>
+      </div>
+
+      <div class="question-info">
+        <span id="question-theme" class="theme"></span>
+        <span id="question-counter"></span>
+      </div>
+
+      <div id="question-text" class="question-text"></div>
+
+      <div id="answers-container"></div>
+
+      <button id="submit-btn" class="submit-btn" onclick="submitAnswer()" disabled>
+        Valider la réponse
+      </button>
+    </div>
+
+    <div id="results-screen" style="display: none;">
+      <div class="results">
+        <h2>🎉 Quiz terminé !</h2>
+        <div id="final-score" class="score"></div>
+        <p id="score-message"></p>
+        <button class="start-btn" onclick="restartQuiz()">🔄 Recommencer</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io("http://localhost:3000");
+    let currentQuestion = null;
+    let selectedAnswer = null;
+
+    // Elements
+    const statusElement = document.getElementById('status');
+    const startScreen = document.getElementById('start-screen');
+    const questionScreen = document.getElementById('question-screen');
+    const resultsScreen = document.getElementById('results-screen');
+    const progressBar = document.getElementById('progress-bar');
+    const previousAnswerDiv = document.getElementById('previous-answer');
+    const questionTheme = document.getElementById('question-theme');
+    const questionCounter = document.getElementById('question-counter');
+    const questionText = document.getElementById('question-text');
+    const answersContainer = document.getElementById('answers-container');
+    const submitBtn = document.getElementById('submit-btn');
+    
+    let currentTimeLeft = 0;
+
+    // Socket events
+    socket.on("connect", () => {
+      statusElement.textContent = `✅ Connecté au serveur`;
+      statusElement.className = 'status connected';
+    });
+
+    socket.on("disconnect", () => {
+      statusElement.textContent = '❌ Déconnecté - Reconnexion...';
+      statusElement.className = 'status disconnected';
+    });
+
+    socket.on("quizQuestion", (data) => {
+      displayQuestion(data);
+    });
+
+    socket.on("quizCompleted", (results) => {
+      showResults(results);
+    });
+
+    socket.on("timerUpdate", (data) => {
+      updateTimer(data.timeLeft);
+    });
+
+    socket.on("error", (error) => {
+      alert(error.message);
+    });
+
+    function startQuiz() {
+      const theme = document.getElementById('theme-select')?.value || null;
+      const limit = parseInt(document.getElementById('limit-input')?.value) || 10;
+      const timeLimit = parseInt(document.getElementById('time-input')?.value) || 30;
+      
+      socket.emit('startQuiz', { theme, limit, timeLimit });
+      startScreen.style.display = 'none';
+      questionScreen.style.display = 'block';
+    }
+
+    function displayQuestion(data) {
+      currentQuestion = data.question;
+      selectedAnswer = null;
+      currentTimeLeft = data.timeLeft;
+      
+      // Show watch mode if active
+      let watchModeHtml = '';
+      if (data.isWatching) {
+        watchModeHtml = '<div class="watch-mode">🔍 MODE SURVEILLANCE ACTIVÉ - Vous êtes maintenant surveillé !</div>';
+      }
+      
+      // Add timer
+      const timerHtml = '<div id="timer" class="timer">⏱️ Temps restant: <span id="time-display">' + currentTimeLeft + '</span>s</div>';
+      
+      // Update progress
+      const progress = (data.questionNumber / data.totalQuestions) * 100;
+      progressBar.style.width = progress + '%';
+      
+      // Show previous answer result
+      if (data.previousAnswer) {
+        previousAnswerDiv.style.display = 'block';
+        const prevAnswer = data.previousAnswer;
+        previousAnswerDiv.className = `previous-answer ${prevAnswer.correct ? 'correct' : 'incorrect'}`;
+        document.getElementById('previous-question').textContent = 'Question précédente';
+        const answerText = prevAnswer.userAnswer === 0 ? 'Temps expiré' : prevAnswer.userAnswer;
+        document.getElementById('previous-result').innerHTML = 
+          `Votre réponse: ${answerText} | ${prevAnswer.correct ? '✅ Correct !' : '❌ Incorrect'}`;
+      } else {
+        previousAnswerDiv.style.display = 'none';
+      }
+      
+      // Update question info
+      questionTheme.textContent = currentQuestion.theme;
+      questionCounter.textContent = `Question ${data.questionNumber}/${data.totalQuestions}`;
+      questionText.textContent = currentQuestion.questionText;
+      
+      // Create answer options with watch mode and timer
+      answersContainer.innerHTML = watchModeHtml + timerHtml;
+      for (let i = 1; i <= 4; i++) {
+        const option = document.createElement('div');
+        option.className = 'answer-option';
+        option.textContent = `${i}. ${currentQuestion[`response${i}`]}`;
+        option.onclick = () => selectAnswer(i, option);
+        answersContainer.appendChild(option);
+      }
+      
+      submitBtn.disabled = true;
+    }
+    
+    function updateTimer(timeLeft) {
+      currentTimeLeft = timeLeft;
+      const timerElement = document.getElementById('timer');
+      const timeDisplay = document.getElementById('time-display');
+      
+      if (timeDisplay) {
+        timeDisplay.textContent = timeLeft;
+        
+        if (timeLeft <= 5) {
+          timerElement.className = 'timer danger';
+        } else if (timeLeft <= 10) {
+          timerElement.className = 'timer warning';
+        } else {
+          timerElement.className = 'timer';
+        }
+      }
+    }
+
+    function selectAnswer(answerNum, element) {
+      // Remove previous selection
+      document.querySelectorAll('.answer-option').forEach(opt => {
+        opt.classList.remove('selected');
+      });
+      
+      // Select current answer
+      element.classList.add('selected');
+      selectedAnswer = answerNum;
+      submitBtn.disabled = false;
+    }
+
+    function submitAnswer() {
+      if (selectedAnswer && currentQuestion) {
+        socket.emit('submitAnswer', {
+          questionId: currentQuestion.id,
+          answer: selectedAnswer
+        });
+        submitBtn.disabled = true;
+      }
+    }
+
+    function showResults(results) {
+      questionScreen.style.display = 'none';
+      resultsScreen.style.display = 'block';
+      
+      const percentage = Math.round((results.score / results.totalQuestions) * 100);
+      document.getElementById('final-score').textContent = `${results.score}/${results.totalQuestions}`;
+      
+      let message = '';
+      if (percentage >= 80) message = '🏆 Excellent ! Vous maîtrisez le sujet !';
+      else if (percentage >= 60) message = '👍 Bien joué ! Continuez comme ça !';
+      else if (percentage >= 40) message = '📚 Pas mal, mais vous pouvez mieux faire !';
+      else message = '💪 Il faut réviser, mais ne vous découragez pas !';
+      
+      document.getElementById('score-message').textContent = message;
+    }
+
+    function restartQuiz() {
+      resultsScreen.style.display = 'none';
+      startScreen.style.display = 'block';
+      progressBar.style.width = '0%';
+    }
+  </script>
+</body>
+</html>
