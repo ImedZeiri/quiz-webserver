@@ -20,6 +20,17 @@ interface QuizSession {
   timeLimit: number;
   timeLeft: number;
   pendingAnswer?: { questionId: number; answer: number };
+  joinedAt: number;
+}
+
+interface GlobalQuiz {
+  isActive: boolean;
+  currentQuestionIndex: number;
+  questions: Question[];
+  timeLimit: number;
+  timeLeft: number;
+  timer?: NodeJS.Timeout;
+  timerInterval?: NodeJS.Timeout;
 }
 
 @WebSocketGateway({
@@ -35,6 +46,7 @@ export class GatewayController
   server: Server;
 
   private quizSessions = new Map<string, QuizSession>();
+  private globalQuiz: GlobalQuiz | null = null;
 
   private async getQuestionsByTheme(theme?: string, limit: number = 10): Promise<Question[]> {
     if (theme) {
@@ -48,6 +60,7 @@ export class GatewayController
 
   handleConnection(client: Socket) {
     console.log(`Client connected: ${client.id}`);
+    this.broadcastPlayerStats();
   }
 
   handleDisconnect(client: Socket) {
@@ -56,17 +69,47 @@ export class GatewayController
     if (session?.timer) clearTimeout(session.timer);
     if (session?.timerInterval) clearInterval(session.timerInterval);
     this.quizSessions.delete(client.id);
+    this.broadcastPlayerStats();
   }
 
   @SubscribeMessage('startQuiz')
   async handleStartQuiz(client: Socket, payload: { theme?: string; limit?: number; timeLimit?: number }) {
     const { theme, limit = 10, timeLimit = 30 } = payload || {};
+    
+    // Si un quiz global est déjà actif, rejoindre en mode watch
+    if (this.globalQuiz?.isActive) {
+      const session: QuizSession = {
+        questions: this.globalQuiz.questions,
+        currentIndex: this.globalQuiz.currentQuestionIndex,
+        score: 0,
+        answers: [],
+        isWatching: true,
+        timeLimit: this.globalQuiz.timeLimit,
+        timeLeft: this.globalQuiz.timeLeft,
+        joinedAt: this.globalQuiz.currentQuestionIndex
+      };
+      
+      this.quizSessions.set(client.id, session);
+      this.sendCurrentQuestion(client, session);
+      this.broadcastPlayerStats();
+      return;
+    }
+    
+    // Démarrer un nouveau quiz global
     const questions = await this.getQuestionsByTheme(theme, limit);
     
     if (questions.length === 0) {
       client.emit('error', { message: 'Aucune question trouvée pour ce thème' });
       return;
     }
+
+    this.globalQuiz = {
+      isActive: true,
+      currentQuestionIndex: 0,
+      questions,
+      timeLimit,
+      timeLeft: timeLimit
+    };
 
     const session: QuizSession = {
       questions,
@@ -75,20 +118,57 @@ export class GatewayController
       answers: [],
       isWatching: false,
       timeLimit,
-      timeLeft: timeLimit
+      timeLeft: timeLimit,
+      joinedAt: 0
     };
     
     this.quizSessions.set(client.id, session);
-    this.sendQuestion(client, session);
+    this.startGlobalQuiz();
   }
 
-  private sendQuestion(client: Socket, session: QuizSession) {
-    if (session.timer) clearTimeout(session.timer);
-    if (session.timerInterval) clearInterval(session.timerInterval);
+  private startGlobalQuiz() {
+    if (!this.globalQuiz) return;
+    
+    this.broadcastCurrentQuestion();
+    
+    this.globalQuiz.timerInterval = setInterval(() => {
+      if (!this.globalQuiz) return;
+      
+      this.globalQuiz.timeLeft--;
+      this.server.emit('timerUpdate', { 
+        timeLeft: this.globalQuiz.timeLeft,
+        ...this.getPlayerStats()
+      });
+      
+      if (this.globalQuiz.timeLeft <= 0) {
+        this.handleGlobalTimeExpired();
+      }
+    }, 1000);
 
+    this.globalQuiz.timer = setTimeout(() => {
+      this.handleGlobalTimeExpired();
+    }, this.globalQuiz.timeLimit * 1000);
+  }
+
+  private broadcastCurrentQuestion() {
+    if (!this.globalQuiz) return;
+    
+    const currentQuestion = this.globalQuiz.questions[this.globalQuiz.currentQuestionIndex];
+    
+    this.quizSessions.forEach((session, clientId) => {
+      const client = this.server.sockets.sockets.get(clientId);
+      if (client) {
+        session.currentIndex = this.globalQuiz!.currentQuestionIndex;
+        session.timeLeft = this.globalQuiz!.timeLeft;
+        session.pendingAnswer = undefined;
+        
+        this.sendCurrentQuestion(client, session);
+      }
+    });
+  }
+
+  private sendCurrentQuestion(client: Socket, session: QuizSession) {
     const currentQuestion = session.questions[session.currentIndex];
-    session.timeLeft = session.timeLimit;
-    session.pendingAnswer = undefined;
     
     client.emit('quizQuestion', {
       question: {
@@ -102,76 +182,95 @@ export class GatewayController
       },
       questionNumber: session.currentIndex + 1,
       totalQuestions: session.questions.length,
-      previousAnswer: session.currentIndex > 0 ? session.answers[session.answers.length - 1] : null,
+      previousAnswer: session.answers.length > 0 ? session.answers[session.answers.length - 1] : null,
       isWatching: session.isWatching,
-      timeLeft: session.timeLeft
+      timeLeft: session.timeLeft,
+      ...this.getPlayerStats()
     });
-
-    session.timerInterval = setInterval(() => {
-      session.timeLeft--;
-      client.emit('timerUpdate', { 
-        timeLeft: session.timeLeft,
-        hasPendingAnswer: !!session.pendingAnswer
-      });
-      
-      if (session.timeLeft <= 0) {
-        this.handleTimeExpired(client, session);
-      }
-    }, 1000);
-
-    session.timer = setTimeout(() => {
-      this.handleTimeExpired(client, session);
-    }, session.timeLimit * 1000);
   }
 
-  private handleTimeExpired(client: Socket, session: QuizSession) {
-    if (session.timerInterval) clearInterval(session.timerInterval);
-    if (session.timer) clearTimeout(session.timer);
+  private handleGlobalTimeExpired() {
+    if (!this.globalQuiz) return;
     
-    const currentQuestion = session.questions[session.currentIndex];
+    if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
+    if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
     
-    let userAnswer = 0;
-    let isCorrect = false;
-    
-    if (session.pendingAnswer && session.pendingAnswer.questionId === currentQuestion.id) {
-      userAnswer = session.pendingAnswer.answer;
-      isCorrect = currentQuestion.correctResponse === userAnswer;
-      if (isCorrect) {
-        session.score++;
-      } else {
-        session.isWatching = true;
+    // Traiter les réponses de tous les joueurs
+    this.quizSessions.forEach((session, clientId) => {
+      if (session.currentIndex === this.globalQuiz!.currentQuestionIndex) {
+        const currentQuestion = session.questions[session.currentIndex];
+        
+        let userAnswer = 0;
+        let isCorrect = false;
+        
+        if (!session.isWatching && session.pendingAnswer && session.pendingAnswer.questionId === currentQuestion.id) {
+          userAnswer = session.pendingAnswer.answer;
+          isCorrect = currentQuestion.correctResponse === userAnswer;
+          if (isCorrect) {
+            session.score++;
+          } else {
+            session.isWatching = true;
+          }
+        } else if (!session.isWatching) {
+          session.isWatching = true;
+        }
+        
+        session.answers.push({
+          questionId: currentQuestion.id,
+          userAnswer,
+          correct: isCorrect
+        });
+        
+        session.pendingAnswer = undefined;
       }
-    } else {
-      session.isWatching = true;
-    }
-    
-    session.answers.push({
-      questionId: currentQuestion.id,
-      userAnswer,
-      correct: isCorrect
     });
 
-    session.pendingAnswer = undefined;
-    session.currentIndex++;
-
-    if (session.currentIndex >= session.questions.length) {
-      this.completeQuiz(client, session);
+    this.globalQuiz.currentQuestionIndex++;
+    
+    if (this.globalQuiz.currentQuestionIndex >= this.globalQuiz.questions.length) {
+      this.completeGlobalQuiz();
     } else {
-      this.sendQuestion(client, session);
+      this.globalQuiz.timeLeft = this.globalQuiz.timeLimit;
+      this.startGlobalQuiz();
     }
   }
 
-  private completeQuiz(client: Socket, session: QuizSession) {
-    if (session.timer) clearTimeout(session.timer);
-    if (session.timerInterval) clearInterval(session.timerInterval);
+  private completeGlobalQuiz() {
+    if (!this.globalQuiz) return;
     
-    client.emit('quizCompleted', {
-      score: session.score,
-      totalQuestions: session.questions.length,
-      answers: session.answers
+    if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
+    if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
+    
+    this.quizSessions.forEach((session, clientId) => {
+      const client = this.server.sockets.sockets.get(clientId);
+      if (client) {
+        client.emit('quizCompleted', {
+          score: session.score,
+          totalQuestions: session.questions.length,
+          answers: session.answers,
+          joinedAt: session.joinedAt
+        });
+      }
     });
     
-    this.quizSessions.delete(client.id);
+    this.globalQuiz = null;
+    this.quizSessions.clear();
+    this.broadcastPlayerStats();
+  }
+
+  private getPlayerStats() {
+    const activePlayers = Array.from(this.quizSessions.values()).filter(s => !s.isWatching).length;
+    const watchingPlayers = Array.from(this.quizSessions.values()).filter(s => s.isWatching).length;
+    
+    return {
+      activePlayers,
+      watchingPlayers,
+      totalPlayers: activePlayers + watchingPlayers
+    };
+  }
+
+  private broadcastPlayerStats() {
+    this.server.emit('playerStats', this.getPlayerStats());
   }
 
   @SubscribeMessage('submitAnswer')
@@ -208,5 +307,7 @@ export class GatewayController
       answer: payload.answer,
       timeLeft: session.timeLeft
     });
+    
+    this.broadcastPlayerStats();
   }
 }
