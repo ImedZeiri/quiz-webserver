@@ -7,6 +7,7 @@ import { Event } from './model/event.entity';
 
 import { QuestionService } from './service/question.service';
 import { EventService } from './service/event.service';
+import { GatewayService } from './service/gateway.service';
 import { QuestionController } from './controller/question.controller';
 import { GatewayController } from './controller/gateway.controller';
 import { databaseConfig } from './config/database.config';
@@ -21,6 +22,7 @@ import { databaseConfig } from './config/database.config';
     AppService,
     QuestionService,
     EventService,
+    GatewayService,
     GatewayController,
   ],
 })
