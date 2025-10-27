@@ -19,6 +19,7 @@ interface QuizSession {
   timerInterval?: NodeJS.Timeout;
   timeLimit: number;
   timeLeft: number;
+  pendingAnswer?: { questionId: number; answer: number };
 }
 
 @WebSocketGateway({
@@ -87,6 +88,7 @@ export class GatewayController
 
     const currentQuestion = session.questions[session.currentIndex];
     session.timeLeft = session.timeLimit;
+    session.pendingAnswer = undefined;
     
     client.emit('quizQuestion', {
       question: {
@@ -105,17 +107,18 @@ export class GatewayController
       timeLeft: session.timeLeft
     });
 
-    // Envoyer les mises à jour du timer chaque seconde
     session.timerInterval = setInterval(() => {
       session.timeLeft--;
-      client.emit('timerUpdate', { timeLeft: session.timeLeft });
+      client.emit('timerUpdate', { 
+        timeLeft: session.timeLeft,
+        hasPendingAnswer: !!session.pendingAnswer
+      });
       
       if (session.timeLeft <= 0) {
         this.handleTimeExpired(client, session);
       }
     }, 1000);
 
-    // Timer de sécurité
     session.timer = setTimeout(() => {
       this.handleTimeExpired(client, session);
     }, session.timeLimit * 1000);
@@ -127,14 +130,28 @@ export class GatewayController
     
     const currentQuestion = session.questions[session.currentIndex];
     
-    // Ajouter réponse vide (temps expiré)
+    let userAnswer = 0;
+    let isCorrect = false;
+    
+    if (session.pendingAnswer && session.pendingAnswer.questionId === currentQuestion.id) {
+      userAnswer = session.pendingAnswer.answer;
+      isCorrect = currentQuestion.correctResponse === userAnswer;
+      if (isCorrect) {
+        session.score++;
+      } else {
+        session.isWatching = true;
+      }
+    } else {
+      session.isWatching = true;
+    }
+    
     session.answers.push({
       questionId: currentQuestion.id,
-      userAnswer: 0, // 0 = pas de réponse
-      correct: false
+      userAnswer,
+      correct: isCorrect
     });
 
-    session.isWatching = true; // Mode surveillance activé
+    session.pendingAnswer = undefined;
     session.currentIndex++;
 
     if (session.currentIndex >= session.questions.length) {
@@ -176,29 +193,20 @@ export class GatewayController
       return;
     }
 
-    // Arrêter les timers
-    if (session.timer) clearTimeout(session.timer);
-    if (session.timerInterval) clearInterval(session.timerInterval);
-
-    const isCorrect = currentQuestion.correctResponse === payload.answer;
-    if (isCorrect) {
-      session.score++;
-    } else {
-      session.isWatching = true;
+    if (session.timeLeft <= 0) {
+      client.emit('error', { message: 'Temps expiré - réponse non acceptée' });
+      return;
     }
 
-    session.answers.push({
+    session.pendingAnswer = {
       questionId: payload.questionId,
-      userAnswer: payload.answer,
-      correct: isCorrect
+      answer: payload.answer
+    };
+
+    client.emit('answerQueued', {
+      questionId: payload.questionId,
+      answer: payload.answer,
+      timeLeft: session.timeLeft
     });
-
-    session.currentIndex++;
-
-    if (session.currentIndex >= session.questions.length) {
-      this.completeQuiz(client, session);
-    } else {
-      this.sendQuestion(client, session);
-    }
   }
 }

@@ -78,6 +78,21 @@
       color: white;
       border-color: #1976D2;
     }
+    .answer-option.queued {
+      background-color: #ff9800;
+      color: white;
+      border-color: #f57c00;
+      position: relative;
+    }
+    .answer-option.queued::after {
+      content: '⏳ En attente';
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 12px;
+      font-weight: bold;
+    }
     .previous-answer {
       background-color: #fff3cd;
       border: 1px solid #ffeaa7;
@@ -229,8 +244,11 @@
       <div id="answers-container"></div>
 
       <button id="submit-btn" class="submit-btn" onclick="submitAnswer()" disabled>
-        Valider la réponse
+        Mettre en file d'attente
       </button>
+      <p style="font-size: 14px; color: #666; text-align: center; margin-top: 10px;">
+        Vous pouvez modifier votre réponse jusqu'à l'expiration du timer
+      </p>
     </div>
 
     <div id="results-screen" style="display: none;">
@@ -283,7 +301,11 @@
     });
 
     socket.on("timerUpdate", (data) => {
-      updateTimer(data.timeLeft);
+      updateTimer(data.timeLeft, data.hasPendingAnswer);
+    });
+
+    socket.on("answerQueued", (data) => {
+      showAnswerQueued(data.answer);
     });
 
     socket.on("error", (error) => {
@@ -349,13 +371,17 @@
       submitBtn.disabled = true;
     }
     
-    function updateTimer(timeLeft) {
+    function updateTimer(timeLeft, hasPendingAnswer) {
       currentTimeLeft = timeLeft;
       const timerElement = document.getElementById('timer');
       const timeDisplay = document.getElementById('time-display');
       
       if (timeDisplay) {
-        timeDisplay.textContent = timeLeft;
+        let timerText = timeLeft;
+        if (hasPendingAnswer) {
+          timerText += ' (réponse en attente)';
+        }
+        timeDisplay.textContent = timerText;
         
         if (timeLeft <= 5) {
           timerElement.className = 'timer danger';
@@ -365,6 +391,16 @@
           timerElement.className = 'timer';
         }
       }
+    }
+    
+    function showAnswerQueued(answer) {
+      // Marquer visuellement la réponse sélectionnée comme "en attente"
+      document.querySelectorAll('.answer-option').forEach((opt, index) => {
+        opt.classList.remove('selected', 'queued');
+        if (index + 1 === answer) {
+          opt.classList.add('queued');
+        }
+      });
     }
 
     function selectAnswer(answerNum, element) {
