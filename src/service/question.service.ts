@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QuestionRepository } from '../repository/question.repository';
+import { Repository } from 'typeorm';
 import { CreateQuestionDto } from '../dto/create-question.dto';
 import { UpdateQuestionDto } from '../dto/update-question.dto';
 import { Question } from '../model/question.entity';
@@ -8,8 +8,8 @@ import { Question } from '../model/question.entity';
 @Injectable()
 export class QuestionService {
   constructor(
-    @InjectRepository(QuestionRepository)
-    private readonly questionRepository: QuestionRepository,
+    @InjectRepository(Question)
+    private readonly questionRepository: Repository<Question>,
   ) {}
 
   async create(createQuestionDto: CreateQuestionDto): Promise<Question> {
@@ -35,10 +35,14 @@ export class QuestionService {
   }
 
   async findRandomQuestions(limit: number = 10): Promise<Question[]> {
-    return this.questionRepository.findRandomQuestions(limit);
+    return this.questionRepository
+      .createQueryBuilder('question')
+      .orderBy('RAND()')
+      .limit(limit)
+      .getMany();
   }
 
   async findByTheme(theme: string): Promise<Question[]> {
-    return this.questionRepository.findByTheme(theme);
+    return this.questionRepository.find({ where: { theme } });
   }
 }

@@ -213,10 +213,49 @@
       background-color: #f44336;
       animation: pulse 0.5s infinite;
     }
+    .event-banner {
+      background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      margin-bottom: 20px;
+      font-weight: bold;
+      animation: eventPulse 3s infinite;
+    }
+    .winner-announcement {
+      background: linear-gradient(45deg, #ffd700, #ffed4e);
+      color: #333;
+      padding: 25px;
+      border-radius: 15px;
+      text-align: center;
+      margin: 20px 0;
+      font-weight: bold;
+      box-shadow: 0 8px 16px rgba(255, 215, 0, 0.3);
+      animation: winnerGlow 2s infinite;
+    }
+    .winner-crown {
+      font-size: 48px;
+      margin-bottom: 10px;
+      animation: bounce 1s infinite;
+    }
     @keyframes pulse {
       0% { opacity: 1; }
       50% { opacity: 0.7; }
       100% { opacity: 1; }
+    }
+    @keyframes eventPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+    }
+    @keyframes winnerGlow {
+      0%, 100% { box-shadow: 0 8px 16px rgba(255, 215, 0, 0.3); }
+      50% { box-shadow: 0 12px 24px rgba(255, 215, 0, 0.6); }
+    }
+    @keyframes bounce {
+      0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+      40% { transform: translateY(-10px); }
+      60% { transform: translateY(-5px); }
     }
   </style>
 </head>
@@ -227,6 +266,11 @@
   </div>
 
   <div id="status" class="status disconnected">Connexion en cours...</div>
+  
+  <div id="event-banner" class="event-banner" style="display: none;">
+    <div>🎉 ÉVÉNEMENT EN COURS 🎉</div>
+    <div id="event-details"></div>
+  </div>
   
   <div id="player-stats" class="player-stats" style="display: none;">
     <div class="stat-item">
@@ -292,6 +336,10 @@
     <div id="results-screen" style="display: none;">
       <div class="results">
         <h2>🎉 Quiz terminé !</h2>
+        <div id="winner-announcement" class="winner-announcement" style="display: none;">
+          <div class="winner-crown">👑</div>
+          <div id="winner-message"></div>
+        </div>
         <div id="final-score" class="score"></div>
         <p id="score-message"></p>
         <button class="start-btn" onclick="restartQuiz()">🔄 Recommencer</button>
@@ -352,6 +400,14 @@
 
     socket.on("error", (error) => {
       alert(error.message);
+    });
+
+    socket.on("eventStarted", (data) => {
+      showEventBanner(data.event);
+    });
+
+    socket.on("eventCompleted", (data) => {
+      hideEventBanner();
     });
 
     function startQuiz() {
@@ -489,14 +545,36 @@
       questionScreen.style.display = 'none';
       resultsScreen.style.display = 'block';
       
+      // Afficher l'annonce du gagnant si applicable
+      const winnerAnnouncement = document.getElementById('winner-announcement');
+      const winnerMessage = document.getElementById('winner-message');
+      
+      if (results.winner) {
+        winnerAnnouncement.style.display = 'block';
+        if (results.isWinner) {
+          winnerMessage.innerHTML = '🎊 FÉLICITATIONS ! 🎊<br>Vous êtes le GAGNANT de cet événement !';
+        } else {
+          winnerMessage.innerHTML = `🏆 Gagnant de l'événement : Joueur ${results.winner.substring(0, 8)}...`;
+        }
+      } else {
+        winnerAnnouncement.style.display = 'none';
+      }
+      
       const percentage = Math.round((results.score / results.totalQuestions) * 100);
       document.getElementById('final-score').textContent = `${results.score}/${results.totalQuestions}`;
       
       let message = '';
-      if (percentage >= 80) message = '🏆 Excellent ! Vous maîtrisez le sujet !';
-      else if (percentage >= 60) message = '👍 Bien joué ! Continuez comme ça !';
-      else if (percentage >= 40) message = '📚 Pas mal, mais vous pouvez mieux faire !';
-      else message = '💪 Il faut réviser, mais ne vous découragez pas !';
+      if (results.joinedAt > 0) {
+        message = `📺 Mode surveillance - Rejoint à la question ${results.joinedAt + 1}`;
+      } else if (percentage >= 80) {
+        message = '🏆 Excellent ! Vous maîtrisez le sujet !';
+      } else if (percentage >= 60) {
+        message = '👍 Bien joué ! Continuez comme ça !';
+      } else if (percentage >= 40) {
+        message = '📚 Pas mal, mais vous pouvez mieux faire !';
+      } else {
+        message = '💪 Il faut réviser, mais ne vous découragez pas !';
+      }
       
       document.getElementById('score-message').textContent = message;
     }
@@ -508,11 +586,27 @@
       document.getElementById('total-players').textContent = stats.totalPlayers;
     }
 
+    function showEventBanner(event) {
+      const banner = document.getElementById('event-banner');
+      const details = document.getElementById('event-details');
+      
+      banner.style.display = 'block';
+      details.innerHTML = `
+        <div>Thème: ${event.theme}</div>
+        <div>${event.numberOfQuestions} questions • Soyez le premier à tout réussir pour gagner !</div>
+      `;
+    }
+
+    function hideEventBanner() {
+      document.getElementById('event-banner').style.display = 'none';
+    }
+
     function restartQuiz() {
       resultsScreen.style.display = 'none';
       startScreen.style.display = 'block';
       progressBar.style.width = '0%';
       document.getElementById('player-stats').style.display = 'none';
+      document.getElementById('winner-announcement').style.display = 'none';
     }
   </script>
 </body>

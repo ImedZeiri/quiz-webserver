@@ -7,7 +7,9 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { QuestionService } from '../service/question.service';
+import { EventService } from '../service/event.service';
 import { Question } from '../model/question.entity';
+import { Event } from '../model/event.entity';
 
 interface QuizSession {
   questions: Question[];
@@ -31,6 +33,8 @@ interface GlobalQuiz {
   timeLeft: number;
   timer?: NodeJS.Timeout;
   timerInterval?: NodeJS.Timeout;
+  event?: Event;
+  participants: Map<string, { clientId: string; score: number; finishedAt?: Date }>;
 }
 
 @WebSocketGateway({
@@ -47,6 +51,7 @@ export class GatewayController
 
   private quizSessions = new Map<string, QuizSession>();
   private globalQuiz: GlobalQuiz | null = null;
+  private eventCheckInterval?: NodeJS.Timeout;
 
   private async getQuestionsByTheme(theme?: string, limit: number = 10): Promise<Question[]> {
     if (theme) {
@@ -56,7 +61,12 @@ export class GatewayController
     return this.questionService.findRandomQuestions(limit);
   }
 
-  constructor(private readonly questionService: QuestionService) {}
+  constructor(
+    private readonly questionService: QuestionService,
+    private readonly eventService: EventService
+  ) {
+    this.startEventChecker();
+  }
 
   handleConnection(client: Socket) {
     console.log(`Client connected: ${client.id}`);
@@ -69,6 +79,9 @@ export class GatewayController
     if (session?.timer) clearTimeout(session.timer);
     if (session?.timerInterval) clearInterval(session.timerInterval);
     this.quizSessions.delete(client.id);
+    if (this.globalQuiz?.participants) {
+      this.globalQuiz.participants.delete(client.id);
+    }
     this.broadcastPlayerStats();
   }
 
@@ -90,6 +103,12 @@ export class GatewayController
       };
       
       this.quizSessions.set(client.id, session);
+      if (this.globalQuiz.participants) {
+        this.globalQuiz.participants.set(client.id, {
+          clientId: client.id,
+          score: 0
+        });
+      }
       this.sendCurrentQuestion(client, session);
       this.broadcastPlayerStats();
       return;
@@ -108,8 +127,14 @@ export class GatewayController
       currentQuestionIndex: 0,
       questions,
       timeLimit,
-      timeLeft: timeLimit
+      timeLeft: timeLimit,
+      participants: new Map()
     };
+    
+    this.globalQuiz.participants.set(client.id, {
+      clientId: client.id,
+      score: 0
+    });
 
     const session: QuizSession = {
       questions,
@@ -208,6 +233,15 @@ export class GatewayController
           isCorrect = currentQuestion.correctResponse === userAnswer;
           if (isCorrect) {
             session.score++;
+            // Mettre à jour le score du participant
+            const participant = this.globalQuiz!.participants?.get(clientId);
+            if (participant) {
+              participant.score = session.score;
+              // Marquer comme terminé si c'est la dernière question
+              if (this.globalQuiz!.currentQuestionIndex === this.globalQuiz!.questions.length - 1) {
+                participant.finishedAt = new Date();
+              }
+            }
           } else {
             session.isWatching = true;
           }
@@ -235,11 +269,33 @@ export class GatewayController
     }
   }
 
-  private completeGlobalQuiz() {
+  private async completeGlobalQuiz() {
     if (!this.globalQuiz) return;
     
     if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
     if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
+    
+    // Déterminer le gagnant (premier à finir avec le meilleur score)
+    let winner: string | null = null;
+    if (this.globalQuiz.event && this.globalQuiz.participants.size > 0) {
+      const participants = Array.from(this.globalQuiz.participants.values())
+        .filter(p => p.finishedAt)
+        .sort((a, b) => {
+          if (a.score !== b.score) return b.score - a.score;
+          return a.finishedAt!.getTime() - b.finishedAt!.getTime();
+        });
+      
+      if (participants.length > 0) {
+        winner = participants[0].clientId;
+        await this.eventService.completeEvent(this.globalQuiz.event.id, winner);
+      }
+      
+      // Émettre l'événement de fin d'événement
+      this.server.emit('eventCompleted', {
+        eventId: this.globalQuiz.event.id,
+        winner
+      });
+    }
     
     this.quizSessions.forEach((session, clientId) => {
       const client = this.server.sockets.sockets.get(clientId);
@@ -248,14 +304,20 @@ export class GatewayController
           score: session.score,
           totalQuestions: session.questions.length,
           answers: session.answers,
-          joinedAt: session.joinedAt
+          joinedAt: session.joinedAt,
+          winner,
+          isWinner: clientId === winner
         });
       }
     });
     
+    // Fermer les connexions après 5 secondes
+    setTimeout(() => {
+      this.server.disconnectSockets(true);
+    }, 5000);
+    
     this.globalQuiz = null;
     this.quizSessions.clear();
-    this.broadcastPlayerStats();
   }
 
   private getPlayerStats() {
@@ -271,6 +333,46 @@ export class GatewayController
 
   private broadcastPlayerStats() {
     this.server.emit('playerStats', this.getPlayerStats());
+  }
+
+  private startEventChecker() {
+    this.eventCheckInterval = setInterval(async () => {
+      if (this.globalQuiz?.isActive) return;
+      
+      const activeEvents = await this.eventService.findActiveEvents();
+      const now = new Date();
+      
+      for (const event of activeEvents) {
+        if (event.startDate <= now) {
+          await this.startEventQuiz(event);
+          break;
+        }
+      }
+    }, 5000);
+  }
+
+  private async startEventQuiz(event: Event) {
+    const questions = await this.getQuestionsByTheme(event.theme, event.numberOfQuestions);
+    
+    this.globalQuiz = {
+      isActive: true,
+      currentQuestionIndex: 0,
+      questions,
+      timeLimit: 30,
+      timeLeft: 30,
+      event,
+      participants: new Map()
+    };
+    
+    this.server.emit('eventStarted', {
+      event: {
+        id: event.id,
+        theme: event.theme,
+        numberOfQuestions: event.numberOfQuestions
+      }
+    });
+    
+    this.startGlobalQuiz();
   }
 
   @SubscribeMessage('submitAnswer')
