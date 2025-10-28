@@ -18,7 +18,7 @@ import { EventRepository } from './repository/event.repository';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     MongooseModule.forRoot(
-      process.env.MONGODB_URI || 'mongodb://localhost:27017/quiz',
+      process.env.MONGODB_URI || 'mongodb+srv://ahmedkazdar:ahmed@cluster0.qyu9hzf.mongodb.net/quiz_db?retryWrites=true&w=majority',
       {
         serverSelectionTimeoutMS: 5000,
         socketTimeoutMS: 45000,
