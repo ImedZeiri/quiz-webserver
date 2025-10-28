@@ -213,6 +213,30 @@
       background-color: #f44336;
       animation: pulse 0.5s infinite;
     }
+    .next-event {
+      background: linear-gradient(45deg, #667eea, #764ba2);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .lobby-section {
+      background: linear-gradient(45deg, #f093fb, #f5576c);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .countdown {
+      font-size: 24px;
+      font-weight: bold;
+      margin: 15px 0;
+      padding: 10px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 8px;
+    }
     .event-banner {
       background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
       color: white;
@@ -266,6 +290,20 @@
   </div>
 
   <div id="status" class="status disconnected">Connexion en cours...</div>
+  
+  <div id="next-event" class="next-event" style="display: none;">
+    <h3>📅 Prochain Événement</h3>
+    <div id="next-event-details"></div>
+    <div id="event-countdown" class="countdown"></div>
+  </div>
+  
+  <div id="lobby-section" class="lobby-section" style="display: none;">
+    <h3>🚪 Lobby Ouvert</h3>
+    <div id="lobby-details"></div>
+    <div id="lobby-countdown" class="countdown"></div>
+    <div id="lobby-participants"></div>
+    <button id="join-lobby-btn" class="start-btn" onclick="joinLobby()">Rejoindre le Lobby</button>
+  </div>
   
   <div id="event-banner" class="event-banner" style="display: none;">
     <div>🎉 ÉVÉNEMENT EN COURS 🎉</div>
@@ -408,6 +446,37 @@
 
     socket.on("eventCompleted", (data) => {
       hideEventBanner();
+    });
+
+    socket.on("nextEvent", (event) => {
+      showNextEvent(event);
+    });
+
+    socket.on("lobbyOpened", (data) => {
+      showLobby(data.event);
+    });
+
+    socket.on("eventCountdown", (data) => {
+      updateEventCountdown(data.timeLeft, data.participants, data.minPlayers);
+    });
+
+    socket.on("lobbyJoined", (data) => {
+      showLobbyJoined(data);
+    });
+
+    socket.on("lobbyUpdate", (data) => {
+      updateLobbyParticipants(data.participants, data.minPlayers);
+    });
+
+    socket.on("eventCancelled", (data) => {
+      showEventCancelled(data);
+    });
+
+    socket.on("autoStartQuiz", (data) => {
+      // Démarrer automatiquement le quiz pour les participants du lobby
+      document.getElementById('lobby-section').style.display = 'none';
+      startScreen.style.display = 'none';
+      questionScreen.style.display = 'block';
     });
 
     function startQuiz() {
@@ -607,6 +676,95 @@
       progressBar.style.width = '0%';
       document.getElementById('player-stats').style.display = 'none';
       document.getElementById('winner-announcement').style.display = 'none';
+    }
+
+    function showNextEvent(event) {
+      const nextEventDiv = document.getElementById('next-event');
+      const detailsDiv = document.getElementById('next-event-details');
+      
+      nextEventDiv.style.display = 'block';
+      detailsDiv.innerHTML = `
+        <div><strong>Thème:</strong> ${event.theme}</div>
+        <div><strong>Questions:</strong> ${event.numberOfQuestions}</div>
+        <div><strong>Début:</strong> ${new Date(event.startDate).toLocaleString('fr-FR')}</div>
+      `;
+      
+      startEventCountdown(event.startDate);
+    }
+
+    function startEventCountdown(startDate) {
+      const countdownDiv = document.getElementById('event-countdown');
+      
+      const updateCountdown = () => {
+        const now = new Date().getTime();
+        const eventTime = new Date(startDate).getTime();
+        const timeLeft = Math.max(0, Math.floor((eventTime - now) / 1000));
+        
+        if (timeLeft > 0) {
+          const hours = Math.floor(timeLeft / 3600);
+          const minutes = Math.floor((timeLeft % 3600) / 60);
+          const seconds = timeLeft % 60;
+          
+          countdownDiv.innerHTML = `⏰ Début dans: ${hours}h ${minutes}m ${seconds}s`;
+        } else {
+          countdownDiv.innerHTML = '🚀 Événement en cours!';
+        }
+      };
+      
+      updateCountdown();
+      setInterval(updateCountdown, 1000);
+    }
+
+    function showLobby(event) {
+      document.getElementById('next-event').style.display = 'none';
+      const lobbyDiv = document.getElementById('lobby-section');
+      const detailsDiv = document.getElementById('lobby-details');
+      
+      lobbyDiv.style.display = 'block';
+      detailsDiv.innerHTML = `
+        <div><strong>Événement:</strong> ${event.theme}</div>
+        <div><strong>Questions:</strong> ${event.numberOfQuestions}</div>
+        <div><strong>Joueurs requis:</strong> ${event.minPlayers}</div>
+      `;
+    }
+
+    function updateEventCountdown(timeLeft, participants, minPlayers) {
+      const countdownDiv = document.getElementById('lobby-countdown');
+      const participantsDiv = document.getElementById('lobby-participants');
+      
+      if (timeLeft > 0) {
+        const minutes = Math.floor(timeLeft / 60);
+        const seconds = timeLeft % 60;
+        countdownDiv.innerHTML = `⏰ Début dans: ${minutes}m ${seconds}s`;
+      } else {
+        countdownDiv.innerHTML = '🚀 Lancement!';
+      }
+      
+      participantsDiv.innerHTML = `👥 Joueurs: ${participants}/${minPlayers}`;
+    }
+
+    function joinLobby() {
+      socket.emit('joinLobby');
+    }
+
+    function showLobbyJoined(data) {
+      const joinBtn = document.getElementById('join-lobby-btn');
+      joinBtn.textContent = '✅ Dans le lobby';
+      joinBtn.disabled = true;
+      joinBtn.style.backgroundColor = '#4CAF50';
+    }
+
+    function updateLobbyParticipants(participants, minPlayers) {
+      const participantsDiv = document.getElementById('lobby-participants');
+      participantsDiv.innerHTML = `👥 Joueurs: ${participants}/${minPlayers}`;
+    }
+
+
+    function autoStartQuiz(data) {
+      // Masquer le lobby et démarrer le quiz automatiquement
+      document.getElementById('lobby-section').style.display = 'none';
+      startScreen.style.display = 'none';
+      questionScreen.style.display = 'block';
     }
   </script>
 </body>

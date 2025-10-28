@@ -2,14 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { Question } from './entities/question.entity';
-import { Event } from './entities/event.entity';
-import { JwtModule } from '@nestjs/jwt';
-import { QuestionService } from './services/question.service';
-import { EventService } from './services/event.service';
-import { GatewayService } from './services/gateway.service';
-import { QuestionController } from './controllers/question.controller';
-import { GatewayController } from './controllers/gateway.controller';
 import { databaseConfig } from './config/database.config';
 import { UsersService } from './services/users.service';
 import { AuthController } from './controllers/auth.controller';
@@ -17,6 +9,13 @@ import { User } from './entities/user.entity';
 import { AuthService } from './services/auth.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
+import { EventController } from './controllers/event.controller';
+import { JwtModule } from '@nestjs/jwt';
+import { GatewayController } from './controllers/gateway.controller';
+import { QuestionController } from './controllers/question.controller';
+import { EventService } from './services/event.service';
+import { GatewayService } from './services/gateway.service';
+import { QuestionService } from './services/question.service';
 
 @Module({
   imports: [
@@ -44,7 +43,12 @@ import { MongooseModule } from '@nestjs/mongoose';
       }),
     }),
   ],
-  controllers: [AppController, QuestionController, AuthController],
+  controllers: [
+    AppController,
+    QuestionController,
+    AuthController,
+    EventController,
+  ],
   providers: [
     AppService,
     QuestionService,

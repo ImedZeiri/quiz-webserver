@@ -7,6 +7,10 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { GatewayService } from '../services/gateway.service';
+import type {
+  StartQuizPayload,
+  SubmitAnswerPayload,
+} from 'src/types/websocket.interface';
 
 @WebSocketGateway({
   cors: {
@@ -35,12 +39,17 @@ export class GatewayController
   }
 
   @SubscribeMessage('startQuiz')
-  async handleStartQuiz(client: Socket, payload: { theme?: string; limit?: number; timeLimit?: number }) {
+  async handleStartQuiz(client: Socket, payload: StartQuizPayload) {
     await this.gatewayService.startQuiz(client.id, payload);
   }
 
   @SubscribeMessage('submitAnswer')
-  async handleSubmitAnswer(client: Socket, payload: { questionId: number; answer: number }) {
+  async handleSubmitAnswer(client: Socket, payload: SubmitAnswerPayload) {
     this.gatewayService.submitAnswer(client.id, payload);
+  }
+
+  @SubscribeMessage('joinLobby')
+  async handleJoinLobby(client: Socket) {
+    this.gatewayService.joinLobby(client.id);
   }
 }
