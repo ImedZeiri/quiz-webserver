@@ -25,12 +25,28 @@ export class EventService {
     return this.eventRepository.findOne({ where: { id: eventId } });
   }
 
-  async createEvent(theme: string, startDate: Date, numberOfQuestions: number): Promise<Event> {
+  async createEvent(theme: string, startDate: Date, numberOfQuestions: number, minPlayers: number = 2): Promise<Event> {
     const event = this.eventRepository.create({
       theme,
       startDate,
-      numberOfQuestions
+      numberOfQuestions,
+      minPlayers
     });
     return this.eventRepository.save(event);
+  }
+
+  async getNextEvent(): Promise<Event | null> {
+    const now = new Date();
+    return this.eventRepository
+      .createQueryBuilder('event')
+      .where('event.isCompleted = :isCompleted', { isCompleted: false })
+      .andWhere('event.startDate > :now', { now })
+      .orderBy('event.startDate', 'ASC')
+      .getOne();
+  }
+
+  async openLobby(eventId: number): Promise<Event | null> {
+    await this.eventRepository.update(eventId, { lobbyOpen: true });
+    return this.eventRepository.findOne({ where: { id: eventId } });
   }
 }

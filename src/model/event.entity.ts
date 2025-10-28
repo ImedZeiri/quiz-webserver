@@ -19,4 +19,10 @@ export class Event {
 
   @Column({ default: false })
   isCompleted: boolean;
+
+  @Column({ default: 2 })
+  minPlayers: number;
+
+  @Column({ default: false })
+  lobbyOpen: boolean;
 }

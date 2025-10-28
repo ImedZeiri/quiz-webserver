@@ -10,6 +10,7 @@ import { EventService } from './service/event.service';
 import { GatewayService } from './service/gateway.service';
 import { QuestionController } from './controller/question.controller';
 import { GatewayController } from './controller/gateway.controller';
+import { EventController } from './controller/event.controller';
 import { databaseConfig } from './config/database.config';
 
 @Module({
@@ -17,7 +18,7 @@ import { databaseConfig } from './config/database.config';
     TypeOrmModule.forRoot(databaseConfig),
     TypeOrmModule.forFeature([Question, Event]),
   ],
-  controllers: [AppController, QuestionController],
+  controllers: [AppController, QuestionController, EventController],
   providers: [
     AppService,
     QuestionService,
