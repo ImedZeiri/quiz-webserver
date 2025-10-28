@@ -13,8 +13,8 @@ async function bootstrap() {
     });
 
     app.useWebSocketAdapter(new IoAdapter(app));
-
-    const port = process.env.PORT || 3000;
+    app.setGlobalPrefix('api');
+    const port = process.env.PORT || 3001;
     await app.listen(port);
 
     console.log(`✅ HTTP Server is running on: http://localhost:${port}`);

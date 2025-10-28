@@ -5,11 +5,11 @@ import {
   Body,
   Patch,
   Param,
-  Delete
+  Delete,
 } from '@nestjs/common';
-import { QuestionService } from '../service/question.service';
-import { CreateQuestionDto } from '../dto/create-question.dto';
-import { UpdateQuestionDto } from '../dto/update-question.dto';
+import { QuestionService } from '../services/question.service';
+import { CreateQuestionDto } from '../dtos/create-question.dto';
+import { UpdateQuestionDto } from '../dtos/update-question.dto';
 
 @Controller('questions')
 export class QuestionController {

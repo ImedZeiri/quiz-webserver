@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { QuestionService } from './question.service';
 import { EventService } from './event.service';
-import { Question } from '../model/question.entity';
-import { Event } from '../model/event.entity';
+import { Question } from '../entities/question.entity';
+import { Event } from '../entities/event.entity';
 
 export interface QuizSession {
   questions: Question[];
