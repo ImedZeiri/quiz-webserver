@@ -25,4 +25,7 @@ export class Event {
 
   @Column({ default: false })
   lobbyOpen: boolean;
+
+  @Column({ default: false })
+  isStarted: boolean;
 }

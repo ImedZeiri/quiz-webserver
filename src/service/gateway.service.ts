@@ -28,6 +28,7 @@ export class GatewayService {
     private readonly eventService: EventService,
   ) {
     this.initializeNextEvent();
+    this.startEventScheduler();
   }
 
   setServer(server: Server) {
@@ -388,19 +389,43 @@ export class GatewayService {
     const now = new Date().getTime();
     const eventTime = new Date(event.startDate).getTime();
     const lobbyTime = eventTime - 5 * 60 * 1000;
+    const startTime = eventTime + 2 * 60 * 1000;
+
+    console.log(`Planification événement: ${event.theme}`);
+    console.log(`Lobby dans: ${Math.max(0, lobbyTime - now) / 1000}s`);
+    console.log(`Début dans: ${Math.max(0, startTime - now) / 1000}s`);
 
     if (lobbyTime > now) {
       this.nextEventTimer = setTimeout(() => {
         this.openEventLobby(event);
       }, lobbyTime - now);
-    } else if (eventTime > now) {
+    } else if (now < startTime && !event.lobbyOpen) {
       this.openEventLobby(event);
     }
 
     this.broadcastNextEvent(event);
   }
 
+  private startEventScheduler() {
+    setInterval(async () => {
+      if (this.currentLobby) return;
+      
+      const nextEvent = await this.eventService.getNextEvent();
+      if (!nextEvent) return;
+      
+      const now = new Date().getTime();
+      const eventTime = new Date(nextEvent.startDate).getTime();
+      const lobbyTime = eventTime - 5 * 60 * 1000;
+      
+      if (now >= lobbyTime && !nextEvent.lobbyOpen) {
+        console.log(`Ouverture automatique du lobby pour: ${nextEvent.theme}`);
+        this.openEventLobby(nextEvent);
+      }
+    }, 30000); // Vérifier toutes les 30 secondes
+  }
+
   private async openEventLobby(event: Event) {
+    console.log(`Ouverture du lobby pour: ${event.theme}`);
     await this.eventService.openLobby(event.id);
 
     this.currentLobby = {
@@ -412,6 +437,7 @@ export class GatewayService {
 
     this.startEventCountdown();
 
+    console.log('Émission de lobbyOpened vers tous les clients');
     this.server.emit('lobbyOpened', {
       event: {
         id: event.id,
@@ -431,7 +457,8 @@ export class GatewayService {
 
       const now = new Date().getTime();
       const eventTime = new Date(this.currentLobby.event.startDate).getTime();
-      const timeLeft = Math.max(0, Math.floor((eventTime - now) / 1000));
+      const startTime = eventTime + 2 * 60 * 1000;
+      const timeLeft = Math.max(0, Math.floor((startTime - now) / 1000));
 
       this.server.emit('eventCountdown', {
         timeLeft,

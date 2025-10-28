@@ -453,6 +453,7 @@
     });
 
     socket.on("lobbyOpened", (data) => {
+      console.log('Lobby ouvert reçu:', data);
       showLobby(data.event);
     });
 
@@ -716,9 +717,11 @@
     }
 
     function showLobby(event) {
+      console.log('Affichage du lobby pour:', event);
       document.getElementById('next-event').style.display = 'none';
       const lobbyDiv = document.getElementById('lobby-section');
       const detailsDiv = document.getElementById('lobby-details');
+      const joinBtn = document.getElementById('join-lobby-btn');
       
       lobbyDiv.style.display = 'block';
       detailsDiv.innerHTML = `
@@ -726,6 +729,11 @@
         <div><strong>Questions:</strong> ${event.numberOfQuestions}</div>
         <div><strong>Joueurs requis:</strong> ${event.minPlayers}</div>
       `;
+      
+      // Réinitialiser le bouton
+      joinBtn.textContent = 'Rejoindre le Lobby';
+      joinBtn.disabled = false;
+      joinBtn.style.backgroundColor = '#2196F3';
     }
 
     function updateEventCountdown(timeLeft, participants, minPlayers) {
@@ -735,12 +743,17 @@
       if (timeLeft > 0) {
         const minutes = Math.floor(timeLeft / 60);
         const seconds = timeLeft % 60;
-        countdownDiv.innerHTML = `⏰ Début dans: ${minutes}m ${seconds}s`;
+        countdownDiv.innerHTML = `⏰ Début dans: ${minutes}m ${String(seconds).padStart(2, '0')}s`;
       } else {
         countdownDiv.innerHTML = '🚀 Lancement!';
       }
       
       participantsDiv.innerHTML = `👥 Joueurs: ${participants}/${minPlayers}`;
+      
+      // Afficher un message si pas assez de joueurs
+      if (participants < minPlayers && timeLeft < 60) {
+        participantsDiv.innerHTML += '<br><small style="color: #ffeb3b;">⚠️ Pas assez de joueurs - événement peut être annulé</small>';
+      }
     }
 
     function joinLobby() {

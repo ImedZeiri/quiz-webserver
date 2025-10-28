@@ -49,4 +49,17 @@ export class EventService {
     await this.eventRepository.update(eventId, { lobbyOpen: true });
     return this.eventRepository.findOne({ where: { id: eventId } });
   }
+
+  async getEventsReadyForLobby(): Promise<Event[]> {
+    const now = new Date();
+    const lobbyTime = new Date(now.getTime() + 5 * 60 * 1000);
+    return this.eventRepository.find({
+      where: { isCompleted: false, lobbyOpen: false }
+    });
+  }
+
+  async startEvent(eventId: number): Promise<Event | null> {
+    await this.eventRepository.update(eventId, { isStarted: true });
+    return this.eventRepository.findOne({ where: { id: eventId } });
+  }
 }
