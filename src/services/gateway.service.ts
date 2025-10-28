@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { QuestionService } from './question.service';
 import { EventService } from './event.service';
+import { Event } from '../entities/event.entity';
+import { Question } from '../entities/question.entity';
 
 import type {
   QuizSession,
@@ -12,8 +14,6 @@ import type {
   SubmitAnswerPayload,
   PlayerStats,
 } from '../types';
-import { Question } from 'src/entities/question.entity';
-
 @Injectable()
 export class GatewayService {
   private quizSessions = new Map<string, QuizSession>();

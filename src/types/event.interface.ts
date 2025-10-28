@@ -1,4 +1,5 @@
-import { Question } from 'src/entities/question.entity';
+import { Event } from '../entities/event.entity';
+import { Question } from '../entities/question.entity';
 
 export interface GlobalQuiz {
   isActive: boolean;
