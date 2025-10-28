@@ -64,7 +64,12 @@ export class GatewayService {
     if (this.globalQuiz?.participants) {
       this.globalQuiz.participants.delete(clientId);
     }
-    // Ne pas supprimer du lobby lors de la déconnexion
+    // Retirer le joueur du lobby s'il était présent
+    if (this.currentLobby?.participants.has(clientId)) {
+      this.currentLobby.participants.delete(clientId);
+      console.log(`Joueur ${clientId} retiré du lobby. Total: ${this.currentLobby.participants.size}`);
+      this.broadcastLobbyUpdate();
+    }
     this.broadcastPlayerStats();
   }
 
