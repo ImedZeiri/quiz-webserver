@@ -1,65 +1,61 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { Event } from '../model/event.entity';
+import { EventRepository } from '../repository/event.repository';
 
 @Injectable()
 export class EventService {
   constructor(
-    @InjectRepository(Event)
-    private readonly eventRepository: Repository<Event>,
+    private readonly eventRepository: EventRepository,
+    @InjectModel(Event.name) private eventModel: Model<Event>,
   ) {}
 
   async findActiveEvents(): Promise<Event[]> {
-    return this.eventRepository.find({
-      where: { isCompleted: false },
-      order: { startDate: 'ASC' }
-    });
+    return this.eventRepository.findActiveEvents();
   }
 
-  async completeEvent(eventId: number, winner: string): Promise<Event | null> {
-    await this.eventRepository.update(eventId, { 
+  async completeEvent(eventId: string, winner: string): Promise<Event | null> {
+    return this.eventRepository.update(eventId, { 
       winner, 
       isCompleted: true 
     });
-    return this.eventRepository.findOne({ where: { id: eventId } });
   }
 
   async createEvent(theme: string, startDate: Date, numberOfQuestions: number, minPlayers: number = 2): Promise<Event> {
-    const event = this.eventRepository.create({
+    return this.eventRepository.create({
       theme,
       startDate,
       numberOfQuestions,
       minPlayers
     });
-    return this.eventRepository.save(event);
   }
 
   async getNextEvent(): Promise<Event | null> {
     const now = new Date();
-    return this.eventRepository
-      .createQueryBuilder('event')
-      .where('event.isCompleted = :isCompleted', { isCompleted: false })
-      .andWhere('event.startDate > :now', { now })
-      .orderBy('event.startDate', 'ASC')
-      .getOne();
+    return this.eventModel
+      .findOne({
+        isCompleted: false,
+        startDate: { $gt: now }
+      })
+      .sort({ startDate: 1 })
+      .exec();
   }
 
-  async openLobby(eventId: number): Promise<Event | null> {
-    await this.eventRepository.update(eventId, { lobbyOpen: true });
-    return this.eventRepository.findOne({ where: { id: eventId } });
+  async openLobby(eventId: string): Promise<Event | null> {
+    return this.eventRepository.update(eventId, { lobbyOpen: true });
   }
 
   async getEventsReadyForLobby(): Promise<Event[]> {
-    const now = new Date();
-    const lobbyTime = new Date(now.getTime() + 5 * 60 * 1000);
-    return this.eventRepository.find({
-      where: { isCompleted: false, lobbyOpen: false }
-    });
+    return this.eventModel
+      .find({ 
+        isCompleted: false, 
+        lobbyOpen: false 
+      })
+      .exec();
   }
 
-  async startEvent(eventId: number): Promise<Event | null> {
-    await this.eventRepository.update(eventId, { isStarted: true });
-    return this.eventRepository.findOne({ where: { id: eventId } });
+  async startEvent(eventId: string): Promise<Event | null> {
+    return this.eventRepository.update(eventId, { isStarted: true });
   }
 }

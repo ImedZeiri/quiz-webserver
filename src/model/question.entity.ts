@@ -1,28 +1,28 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
 
-@Entity('question')
-export class Question {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @Column()
+@Schema()
+export class Question extends Document {
+  @Prop({ required: true })
   theme: string;
 
-  @Column({ type: 'text' })
+  @Prop({ required: true })
   questionText: string;
 
-  @Column()
+  @Prop({ required: true })
   response1: string;
 
-  @Column()
+  @Prop({ required: true })
   response2: string;
 
-  @Column()
+  @Prop({ required: true })
   response3: string;
 
-  @Column()
+  @Prop({ required: true })
   response4: string;
 
-  @Column()
+  @Prop({ required: true })
   correctResponse: number;
 }
+
+export const QuestionSchema = SchemaFactory.createForClass(Question);

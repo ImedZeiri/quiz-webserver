@@ -1,31 +1,31 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
 
-@Entity('event')
-export class Event {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @Column()
+@Schema()
+export class Event extends Document {
+  @Prop({ required: true })
   theme: string;
 
-  @Column({ type: 'datetime' })
+  @Prop({ required: true })
   startDate: Date;
 
-  @Column()
+  @Prop({ required: true })
   numberOfQuestions: number;
 
-  @Column({ nullable: true })
+  @Prop()
   winner?: string;
 
-  @Column({ default: false })
+  @Prop({ default: false })
   isCompleted: boolean;
 
-  @Column({ default: 2 })
+  @Prop({ default: 2 })
   minPlayers: number;
 
-  @Column({ default: false })
+  @Prop({ default: false })
   lobbyOpen: boolean;
 
-  @Column({ default: false })
+  @Prop({ default: false })
   isStarted: boolean;
 }
+
+export const EventSchema = SchemaFactory.createForClass(Event);

@@ -1,48 +1,40 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { CreateQuestionDto } from '../dto/create-question.dto';
 import { UpdateQuestionDto } from '../dto/update-question.dto';
 import { Question } from '../model/question.entity';
+import { QuestionRepository } from '../repository/question.repository';
 
 @Injectable()
 export class QuestionService {
   constructor(
-    @InjectRepository(Question)
-    private readonly questionRepository: Repository<Question>,
+    private readonly questionRepository: QuestionRepository,
   ) {}
 
   async create(createQuestionDto: CreateQuestionDto): Promise<Question> {
-    const question = this.questionRepository.create(createQuestionDto);
-    return this.questionRepository.save(question);
+    return this.questionRepository.create(createQuestionDto);
   }
 
   async findAll(): Promise<Question[]> {
-    return this.questionRepository.find();
+    return this.questionRepository.findAll();
   }
 
-  async findOne(id: number): Promise<Question | null> {
-    return this.questionRepository.findOne({ where: { id } });
+  async findOne(id: string): Promise<Question | null> {
+    return this.questionRepository.findById(id);
   }
 
-  async update(id: number, updateQuestionDto: UpdateQuestionDto): Promise<Question | null> {
-    await this.questionRepository.update(id, updateQuestionDto);
-    return this.findOne(id);
+  async update(id: string, updateQuestionDto: UpdateQuestionDto): Promise<Question | null> {
+    return this.questionRepository.update(id, updateQuestionDto);
   }
 
-  async remove(id: number): Promise<void> {
-    await this.questionRepository.delete(id);
+  async remove(id: string): Promise<Question | null> {
+    return this.questionRepository.delete(id);
   }
 
   async findRandomQuestions(limit: number = 10): Promise<Question[]> {
-    return this.questionRepository
-      .createQueryBuilder('question')
-      .orderBy('RAND()')
-      .limit(limit)
-      .getMany();
+    return this.questionRepository.findRandomQuestions(limit);
   }
 
   async findByTheme(theme: string): Promise<Question[]> {
-    return this.questionRepository.find({ where: { theme } });
+    return this.questionRepository.findByTheme(theme);
   }
 }
