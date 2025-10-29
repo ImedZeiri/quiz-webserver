@@ -14,6 +14,18 @@ import type {
   PlayerStats
 } from '../types';
 
+interface UserSession {
+  socketId: string;
+  token: string;
+  userId?: string;
+  isConnected: boolean;
+  isParticipating: boolean;
+  participationMode?: 'play' | 'watch';
+  isAuthenticated: boolean;
+  userType: 'authenticated' | 'guest';
+  connectedAt: Date;
+}
+
 @Injectable()
 export class GatewayService {
   private quizSessions = new Map<string, QuizSession>();
@@ -22,6 +34,7 @@ export class GatewayService {
   private server: Server;
   private currentLobby: EventLobby | null = null;
   private nextEventTimer?: NodeJS.Timeout;
+  private userSessions = new Map<string, UserSession>();
 
   constructor(
     private readonly questionService: QuestionService,
@@ -64,9 +77,19 @@ export class GatewayService {
 
   handleConnection(clientId: string) {
     console.log(`Client connected: ${clientId}`);
+    
+    this.userSessions.set(clientId, {
+      socketId: clientId,
+      token: '',
+      isConnected: true,
+      isParticipating: false,
+      isAuthenticated: false,
+      userType: 'guest',
+      connectedAt: new Date()
+    });
+    
     this.sendNextEventInfo(clientId);
     
-    // Vérifier si un lobby devrait être ouvert
     if (!this.currentLobby) {
       this.checkPendingEvents();
     }
@@ -76,10 +99,14 @@ export class GatewayService {
       this.sendEventCountdown(clientId);
     }
     this.broadcastPlayerStats();
+    this.broadcastUserStats();
   }
 
   handleDisconnection(clientId: string) {
     console.log(`Client disconnected: ${clientId}`);
+    
+    this.userSessions.delete(clientId);
+    
     const session = this.quizSessions.get(clientId);
     if (session?.timer) clearTimeout(session.timer);
     if (session?.timerInterval) clearInterval(session.timerInterval);
@@ -87,13 +114,14 @@ export class GatewayService {
     if (this.globalQuiz?.participants) {
       this.globalQuiz.participants.delete(clientId);
     }
-    // Retirer le joueur du lobby s'il était présent
+    
     if (this.currentLobby?.participants.has(clientId)) {
       this.currentLobby.participants.delete(clientId);
       console.log(`Joueur ${clientId} retiré du lobby. Total: ${this.currentLobby.participants.size}`);
       this.broadcastLobbyUpdate();
     }
     this.broadcastPlayerStats();
+    this.broadcastUserStats();
   }
 
   async startQuiz(
@@ -123,6 +151,7 @@ export class GatewayService {
           score: 0,
         } as QuizParticipant);
       }
+      this.updateUserParticipation(clientId, true, 'watch');
       this.sendCurrentQuestion(client!, session);
       this.broadcastPlayerStats();
       return;
@@ -163,6 +192,7 @@ export class GatewayService {
     };
 
     this.quizSessions.set(clientId, session);
+    this.updateUserParticipation(clientId, true, 'play');
     this.startGlobalQuiz();
     } catch (error) {
       console.error('Erreur lors du démarrage du quiz:', error);
@@ -414,6 +444,85 @@ export class GatewayService {
     this.server.emit('playerStats', this.getPlayerStats());
   }
 
+  authenticateUser(clientId: string, token: string) {
+    const userSession = this.userSessions.get(clientId);
+    if (userSession) {
+      userSession.token = token;
+      userSession.userId = this.extractUserIdFromToken(token);
+      userSession.isAuthenticated = true;
+      userSession.userType = 'authenticated';
+      
+      console.log('========================================');
+      console.log('🔗 FUSION TOKEN/SESSION');
+      console.log('========================================');
+      console.log(`🆔 Socket ID: ${clientId}`);
+      console.log(`🔑 Token: ${token}`);
+      console.log(`👤 User ID: ${userSession.userId || 'N/A'}`);
+      console.log(`🔐 Type: ${userSession.userType}`);
+      console.log(`⏰ Connecté à: ${userSession.connectedAt.toLocaleString()}`);
+      console.log('========================================\n');
+      
+      this.broadcastUserStats();
+    }
+  }
+
+  private extractUserIdFromToken(token: string): string | undefined {
+    try {
+      const cleanToken = token.replace('Bearer ', '');
+      const payload = JSON.parse(atob(cleanToken.split('.')[1]));
+      return payload.sub || payload.userId || payload.id;
+    } catch (error) {
+      console.warn('Impossible d\'extraire l\'ID utilisateur du token');
+      return undefined;
+    }
+  }
+
+  private updateUserParticipation(clientId: string, isParticipating: boolean, mode?: 'play' | 'watch') {
+    const userSession = this.userSessions.get(clientId);
+    if (userSession) {
+      userSession.isParticipating = isParticipating;
+      userSession.participationMode = mode;
+      this.broadcastUserStats();
+    }
+  }
+
+  private getUserStats() {
+    const sessions = Array.from(this.userSessions.values());
+    
+    const connectedUsers = sessions.filter(s => s.isConnected).length;
+    const authenticatedUsers = sessions.filter(s => s.isAuthenticated).length;
+    const guestUsers = sessions.filter(s => !s.isAuthenticated).length;
+    const participatingUsers = sessions.filter(s => s.isParticipating).length;
+    const playingUsers = sessions.filter(s => s.participationMode === 'play').length;
+    const watchingUsers = sessions.filter(s => s.participationMode === 'watch').length;
+    
+    // Stats par type d'utilisateur
+    const authenticatedPlaying = sessions.filter(s => s.isAuthenticated && s.participationMode === 'play').length;
+    const guestPlaying = sessions.filter(s => !s.isAuthenticated && s.participationMode === 'play').length;
+    const authenticatedWatching = sessions.filter(s => s.isAuthenticated && s.participationMode === 'watch').length;
+    const guestWatching = sessions.filter(s => !s.isAuthenticated && s.participationMode === 'watch').length;
+    
+    return {
+      connectedUsers,
+      authenticatedUsers,
+      guestUsers,
+      participatingUsers,
+      playingUsers,
+      watchingUsers,
+      authenticatedPlaying,
+      guestPlaying,
+      authenticatedWatching,
+      guestWatching,
+      totalSessions: sessions.length
+    };
+  }
+
+  private broadcastUserStats() {
+    const stats = this.getUserStats();
+    console.log('📊 STATS UTILISATEURS:', stats);
+    this.server.emit('userStats', stats);
+  }
+
   private async initializeNextEvent() {
     const nextEvent = await this.eventService.getNextEvent();
     if (nextEvent) {
@@ -598,6 +707,7 @@ export class GatewayService {
         joinedAt: 0,
       };
       this.quizSessions.set(clientId, session);
+      this.updateUserParticipation(clientId, true, 'play');
     });
 
     console.log(`Quiz démarré avec ${participants.size} participants et ${questions.length} questions`);

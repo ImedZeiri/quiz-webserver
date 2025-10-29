@@ -52,11 +52,6 @@ export class GatewayController
 
   @SubscribeMessage('authenticate')
   async handleAuthenticate(client: Socket, payload: { token: string }) {
-    console.log('========================================');
-    console.log('🎫 TOKEN REÇU DU FRONTEND');
-    console.log('========================================');
-    console.log(`🆔 Client ID: ${client.id}`);
-    console.log(`🔑 Token reçu: ${payload.token}`);
-    console.log('========================================\n');
+    this.gatewayService.authenticateUser(client.id, payload.token);
   }
 }
