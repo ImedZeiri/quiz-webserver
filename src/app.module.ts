@@ -20,12 +20,12 @@ import { EventRepository } from './repository/event.repository';
        envFilePath: '.env',
      }),
   MongooseModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        uri: configService.get<string>('MONGODB_URI')
-      }),
-      inject: [ConfigService],
-    }),
+  imports: [ConfigModule],
+  useFactory: (configService: ConfigService) => ({
+    uri: configService.get<string>('MONGODB_URI', 'mongodb+srv://ahmedkazdar:ahmed@cluster0.qyu9hzf.mongodb.net/Quiz?retryWrites=true&w=majority')
+  }),
+  inject: [ConfigService],
+}),
     MongooseModule.forFeature([
       { name: Question.name, schema: QuestionSchema },
       { name: Event.name, schema: EventSchema },
