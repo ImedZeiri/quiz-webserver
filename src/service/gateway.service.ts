@@ -29,6 +29,10 @@ export class GatewayService {
   ) {
     this.initializeNextEvent();
     this.startEventScheduler();
+    // Vérification immédiate des événements au démarrage
+    setTimeout(() => this.checkPendingEvents(), 2000);
+    // Vérification périodique pour debug
+    setInterval(() => this.debugEventStatus(), 30000);
   }
 
   setServer(server: Server) {
@@ -39,18 +43,37 @@ export class GatewayService {
     theme?: string,
     limit: number = 10,
   ): Promise<Question[]> {
-    if (theme) {
+    console.log(`getQuestionsByTheme - Thème: ${theme}, Limite: ${limit}`);
+    
+    if (theme && theme.trim() !== '') {
       const themeQuestions = await this.questionService.findByTheme(theme);
-      return themeQuestions.slice(0, limit);
+      console.log(`Questions trouvées pour le thème '${theme}': ${themeQuestions.length}`);
+      
+      if (themeQuestions.length > 0) {
+        const result = themeQuestions.slice(0, limit);
+        console.log(`Questions retournées après slice: ${result.length}`);
+        return result;
+      }
     }
-    return this.questionService.findRandomQuestions(limit);
+    
+    console.log(`Retour de questions aléatoires avec limite: ${limit}`);
+    const randomQuestions = await this.questionService.findRandomQuestions(limit);
+    console.log(`Questions aléatoires récupérées: ${randomQuestions.length}`);
+    return randomQuestions;
   }
 
   handleConnection(clientId: string) {
     console.log(`Client connected: ${clientId}`);
     this.sendNextEventInfo(clientId);
+    
+    // Vérifier si un lobby devrait être ouvert
+    if (!this.currentLobby) {
+      this.checkPendingEvents();
+    }
+    
     if (this.currentLobby) {
       this.sendLobbyInfo(clientId);
+      this.sendEventCountdown(clientId);
     }
     this.broadcastPlayerStats();
   }
@@ -77,8 +100,9 @@ export class GatewayService {
     clientId: string,
     payload: StartQuizPayload,
   ) {
-    const { theme, limit = 10, timeLimit = 30 } = payload || {};
-    const client = this.server.sockets.sockets.get(clientId);
+    try {
+      const { theme, limit = 10, timeLimit = 30 } = payload || {};
+      const client = this.server.sockets.sockets.get(clientId);
 
     if (this.globalQuiz?.isActive) {
       const session: QuizSession = {
@@ -140,6 +164,13 @@ export class GatewayService {
 
     this.quizSessions.set(clientId, session);
     this.startGlobalQuiz();
+    } catch (error) {
+      console.error('Erreur lors du démarrage du quiz:', error);
+      const client = this.server.sockets.sockets.get(clientId);
+      client?.emit('error', {
+        message: 'Erreur lors du démarrage du quiz. Veuillez réessayer.',
+      });
+    }
   }
 
   submitAnswer(
@@ -394,18 +425,28 @@ export class GatewayService {
     const now = new Date().getTime();
     const eventTime = new Date(event.startDate).getTime();
     const lobbyTime = eventTime - 5 * 60 * 1000;
-    const startTime = eventTime + 2 * 60 * 1000;
+    const startTime = eventTime;
+    const endTime = eventTime + 2 * 60 * 1000;
 
     console.log(`Planification événement: ${event.theme}`);
+    console.log(`Heure actuelle: ${new Date(now).toLocaleString()}`);
+    console.log(`Heure événement: ${new Date(eventTime).toLocaleString()}`);
+    console.log(`Heure lobby: ${new Date(lobbyTime).toLocaleString()}`);
+    console.log(`Heure démarrage: ${new Date(startTime).toLocaleString()}`);
     console.log(`Lobby dans: ${Math.max(0, lobbyTime - now) / 1000}s`);
     console.log(`Début dans: ${Math.max(0, startTime - now) / 1000}s`);
 
-    if (lobbyTime > now) {
-      this.nextEventTimer = setTimeout(() => {
-        this.openEventLobby(event);
-      }, lobbyTime - now);
-    } else if (now < startTime && !event.lobbyOpen) {
+    // Si c'est déjà l'heure d'ouvrir le lobby
+    if (now >= lobbyTime && !event.lobbyOpen && now <= endTime) {
+      console.log('Ouverture immédiate du lobby');
       this.openEventLobby(event);
+    } else if (lobbyTime > now) {
+      // Programmer l'ouverture du lobby
+      const delay = lobbyTime - now;
+      console.log(`Programmation ouverture lobby dans ${delay / 1000}s`);
+      this.nextEventTimer = setTimeout(() => {
+        this.checkPendingEvents(); // Utiliser checkPendingEvents au lieu d'appeler directement openEventLobby
+      }, delay);
     }
 
     this.broadcastNextEvent(event);
@@ -415,24 +456,31 @@ export class GatewayService {
     setInterval(async () => {
       if (this.currentLobby) return;
       
-      const nextEvent = await this.eventService.getNextEvent();
-      if (!nextEvent) return;
+      const eventsReady = await this.eventService.getEventsReadyForLobby();
       
-      const now = new Date().getTime();
-      const eventTime = new Date(nextEvent.startDate).getTime();
-      const lobbyTime = eventTime - 5 * 60 * 1000;
-      
-      if (now >= lobbyTime && !nextEvent.lobbyOpen) {
-        console.log(`Ouverture automatique du lobby pour: ${nextEvent.theme}`);
-        this.openEventLobby(nextEvent);
+      for (const event of eventsReady) {
+        const now = new Date().getTime();
+        const eventTime = new Date(event.startDate).getTime();
+        const lobbyTime = eventTime - 5 * 60 * 1000;
+        const endTime = eventTime + 2 * 60 * 1000;
+        
+        // Ouvrir le lobby si on est dans la fenêtre de 5 min avant à 2 min après l'événement
+        if (now >= lobbyTime && now <= endTime && !event.lobbyOpen) {
+          console.log(`Ouverture automatique du lobby pour: ${event.theme}`);
+          console.log(`Heure actuelle: ${new Date(now).toLocaleString()}`);
+          console.log(`Heure événement: ${new Date(eventTime).toLocaleString()}`);
+          console.log(`Heure lobby: ${new Date(lobbyTime).toLocaleString()}`);
+          console.log(`Fenêtre lobby: ${new Date(lobbyTime).toLocaleString()} - ${new Date(endTime).toLocaleString()}`);
+          this.openEventLobby(event);
+          break; // Traiter un seul événement à la fois
+        }
       }
-    }, 30000); // Vérifier toutes les 30 secondes
+    }, 5000); // Vérifier toutes les 5 secondes pour plus de réactivité
   }
 
   private async openEventLobby(event: Event) {
-    console.log(`Ouverture du lobby pour: ${event.theme}`);
-    await this.eventService.openLobby(event.id);
-
+    if (this.currentLobby) return;
+    
     this.currentLobby = {
       event,
       participants: new Set(),
@@ -440,13 +488,15 @@ export class GatewayService {
       lobbyTimer: undefined,
     };
 
-    this.startEventCountdown();
+    if (!event.lobbyOpen) {
+      await this.eventService.openLobby(event.id);
+    }
 
-    console.log('Émission de lobbyOpened vers tous les clients');
+    this.startEventCountdown();
     this.server.emit('lobbyOpened', {
       event: {
         id: event.id,
-        theme: event.theme,
+        theme: event.theme || 'Questions Aléatoires',
         numberOfQuestions: event.numberOfQuestions,
         startDate: event.startDate,
         minPlayers: event.minPlayers,
@@ -462,8 +512,7 @@ export class GatewayService {
 
       const now = new Date().getTime();
       const eventTime = new Date(this.currentLobby.event.startDate).getTime();
-      const startTime = eventTime + 2 * 60 * 1000;
-      const timeLeft = Math.max(0, Math.floor((startTime - now) / 1000));
+      const timeLeft = Math.max(0, Math.floor((eventTime - now) / 1000));
 
       this.server.emit('eventCountdown', {
         timeLeft,
@@ -510,10 +559,17 @@ export class GatewayService {
   }
 
   private async startEventQuiz(event: Event, participants: Set<string>) {
+    console.log(`=== DÉMARRAGE QUIZ ÉVÉNEMENT ===`);
+    console.log(`Thème: ${event.theme}`);
+    console.log(`Nombre de questions demandées: ${event.numberOfQuestions}`);
+    
     const questions = await this.getQuestionsByTheme(
       event.theme,
       event.numberOfQuestions,
     );
+    
+    console.log(`Nombre de questions récupérées: ${questions.length}`);
+    console.log(`Questions:`, questions.map(q => ({ id: q.id, theme: q.theme, text: q.questionText.substring(0, 50) + '...' })));
 
     this.globalQuiz = {
       isActive: true,
@@ -544,6 +600,8 @@ export class GatewayService {
       this.quizSessions.set(clientId, session);
     });
 
+    console.log(`Quiz démarré avec ${participants.size} participants et ${questions.length} questions`);
+    console.log(`=== FIN DÉMARRAGE QUIZ ÉVÉNEMENT ===`);
     console.log(`Quiz démarré avec ${participants.size} participants`);
 
     this.server.emit('eventStarted', {
@@ -638,5 +696,103 @@ export class GatewayService {
         minPlayers: this.currentLobby.event.minPlayers,
       },
     });
+  }
+
+  private sendEventCountdown(clientId: string) {
+    if (!this.currentLobby) return;
+
+    const now = new Date().getTime();
+    const eventTime = new Date(this.currentLobby.event.startDate).getTime();
+    const timeLeft = Math.max(0, Math.floor((eventTime - now) / 1000));
+
+    const client = this.server.sockets.sockets.get(clientId);
+    client?.emit('eventCountdown', {
+      timeLeft,
+      participants: this.currentLobby.participants.size,
+      minPlayers: this.currentLobby.event.minPlayers,
+    });
+  }
+
+  private async checkPendingEvents() {
+    console.log('=== VÉRIFICATION ÉVÉNEMENTS ===');
+    
+    if (this.currentLobby) {
+      console.log('Un lobby est déjà ouvert');
+      return;
+    }
+    
+    const eventsReady = await this.eventService.getEventsReadyForLobby();
+    console.log(`Événements prêts: ${eventsReady.length}`);
+    
+    for (const event of eventsReady) {
+      const now = new Date().getTime();
+      const eventTime = new Date(event.startDate).getTime();
+      const lobbyTime = eventTime - 5 * 60 * 1000;
+      const endTime = eventTime + 2 * 60 * 1000;
+      
+      console.log(`\n--- Événement ID: ${event.id} ---`);
+      console.log(`Thème: "${event.theme}" (vide: ${!event.theme || event.theme.trim() === ''})`);
+      console.log(`Maintenant: ${new Date(now).toISOString()}`);
+      console.log(`Lobby ouvre à: ${new Date(lobbyTime).toISOString()}`);
+      console.log(`Événement à: ${new Date(eventTime).toISOString()}`);
+      console.log(`Lobby ferme à: ${new Date(endTime).toISOString()}`);
+      console.log(`Dans fenêtre: ${now >= lobbyTime && now <= endTime}`);
+      console.log(`LobbyOpen en DB: ${event.lobbyOpen}`);
+      
+      if (now >= lobbyTime && now <= endTime) {
+        console.log(`\n🚀 OUVERTURE DU LOBBY`);
+        this.currentLobby = {
+          event,
+          participants: new Set(),
+          countdownTimer: undefined,
+          lobbyTimer: undefined,
+        };
+        
+        if (!event.lobbyOpen) {
+          await this.eventService.openLobby(event.id);
+        }
+        
+        this.startEventCountdown();
+        this.server.emit('lobbyOpened', {
+          event: {
+            id: event.id,
+            theme: event.theme || 'Questions Aléatoires',
+            numberOfQuestions: event.numberOfQuestions,
+            startDate: event.startDate,
+            minPlayers: event.minPlayers,
+          },
+        });
+        
+        console.log(`Lobby ouvert avec succès!`);
+        break;
+      }
+    }
+    console.log('=== FIN VÉRIFICATION ===\n');
+  }
+
+  private async debugEventStatus() {
+    const now = new Date();
+    const events = await this.eventService.findActiveEvents();
+    
+    console.log('=== DEBUG STATUS ===');
+    console.log(`Heure actuelle: ${now.toLocaleString()}`);
+    console.log(`Lobby actuel: ${this.currentLobby ? 'OUVERT' : 'FERMÉ'}`);
+    console.log(`Événements actifs: ${events.length}`);
+    
+    for (const event of events) {
+      const eventTime = new Date(event.startDate).getTime();
+      const lobbyTime = eventTime - 5 * 60 * 1000;
+      const endTime = eventTime + 2 * 60 * 1000;
+      const nowTime = now.getTime();
+      
+      console.log(`\n--- Événement: ${event.theme} ---`);
+      console.log(`ID: ${event.id}`);
+      console.log(`Heure événement: ${new Date(eventTime).toLocaleString()}`);
+      console.log(`Fenêtre lobby: ${new Date(lobbyTime).toLocaleString()} - ${new Date(endTime).toLocaleString()}`);
+      console.log(`Lobby ouvert: ${event.lobbyOpen}`);
+      console.log(`Dans fenêtre: ${nowTime >= lobbyTime && nowTime <= endTime}`);
+      console.log(`Temps jusqu'au lobby: ${Math.round((lobbyTime - nowTime) / 1000)}s`);
+    }
+    console.log('===================\n');
   }
 }

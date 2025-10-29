@@ -2,33 +2,34 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Event } from '../model/event.entity';
-import { EventRepository } from '../repository/event.repository';
 
 @Injectable()
 export class EventService {
   constructor(
-    private readonly eventRepository: EventRepository,
-    @InjectModel(Event.name) private eventModel: Model<Event>,
+    @InjectModel(Event.name)
+    private readonly eventModel: Model<Event>,
   ) {}
 
   async findActiveEvents(): Promise<Event[]> {
-    return this.eventRepository.findActiveEvents();
+    return this.eventModel.find({ isCompleted: false }).sort({ startDate: 1 }).exec();
   }
 
   async completeEvent(eventId: string, winner: string): Promise<Event | null> {
-    return this.eventRepository.update(eventId, { 
-      winner, 
-      isCompleted: true 
-    });
+    return this.eventModel.findByIdAndUpdate(
+      eventId,
+      { winner, isCompleted: true },
+      { new: true }
+    ).exec();
   }
 
   async createEvent(theme: string, startDate: Date, numberOfQuestions: number, minPlayers: number = 2): Promise<Event> {
-    return this.eventRepository.create({
+    const event = new this.eventModel({
       theme,
       startDate,
       numberOfQuestions,
       minPlayers
     });
+    return event.save();
   }
 
   async getNextEvent(): Promise<Event | null> {
@@ -43,19 +44,29 @@ export class EventService {
   }
 
   async openLobby(eventId: string): Promise<Event | null> {
-    return this.eventRepository.update(eventId, { lobbyOpen: true });
+    return this.eventModel.findByIdAndUpdate(
+      eventId,
+      { lobbyOpen: true },
+      { new: true }
+    ).exec();
   }
 
   async getEventsReadyForLobby(): Promise<Event[]> {
-    return this.eventModel
-      .find({ 
-        isCompleted: false, 
-        lobbyOpen: false 
-      })
-      .exec();
+    const now = new Date();
+    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+    
+    return this.eventModel.find({
+      isCompleted: false,
+      lobbyOpen: false,
+      startDate: { $gte: fiveMinutesAgo, $lte: new Date(now.getTime() + 10 * 60 * 1000) }
+    }).exec();
   }
 
   async startEvent(eventId: string): Promise<Event | null> {
-    return this.eventRepository.update(eventId, { isStarted: true });
+    return this.eventModel.findByIdAndUpdate(
+      eventId,
+      { isStarted: true },
+      { new: true }
+    ).exec();
   }
 }
