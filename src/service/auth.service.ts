@@ -32,7 +32,7 @@ export class AuthService {
 
   // exemple utile pour guarded routes
   async validateUserById(userId: string) {
-    return this.usersService.findByUuid(userId);
+    return this.usersService.findById(userId);
   }
   generateOtp(phone: string): string {
     const otp = crypto.randomInt(1000, 9999).toString();
