@@ -1,33 +1,41 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { User } from '../model/user.entity';
+import { Injectable } from '@nestjs/common';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { UserRepository } from '../repository/user.repository';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 
 @Injectable()
 export class UsersService {
-  private repoWrapper: UserRepository;
-
   constructor(private readonly userRepository: UserRepository) {}
 
   async create(createUserDto: CreateUserDto) {
-    // validations
-    // const existingPhone = await this.repoWrapper.findByPhone(
-    //   createUserDto.phoneNumber,
-    // );
-    // if (existingPhone)
-    //   throw new BadRequestException('Phone number already used');
+    // Vérifier si un utilisateur existe déjà avec ce numéro de téléphone
+    const existingUser = await this.userRepository.findByPhone(
+      createUserDto.phoneNumber,
+    );
 
-    const user = await this.userRepository.createAndSave({
+    if (existingUser) {
+      // Mettre à jour uniquement le username
+      existingUser.username = createUserDto.username;
+      await existingUser.save();
+
+      return {
+        ...existingUser.toObject(),
+        message: 'Username updated for existing user',
+      };
+    }
+
+    // Si aucun utilisateur n'existe, on en crée un nouveau
+    const newUser = await this.userRepository.createAndSave({
       username: createUserDto.username,
       phoneNumber: createUserDto.phoneNumber,
     });
 
-    return user;
+    return {
+      ...newUser.toObject(),
+      message: 'New user created successfully',
+    };
   }
 
-  async findByUuid(id: string) {
+  async findById(id: string) {
     return this.userRepository.findById(id);
   }
 }
