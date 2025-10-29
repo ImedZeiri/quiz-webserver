@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param } from '@nestjs/common';
 import { EventService } from '../service/event.service';
 import { Event } from '../model/event.entity';
 import type { CreateEventData } from 'src/types/event.interface';
@@ -25,5 +25,10 @@ export class EventController {
       eventData.numberOfQuestions,
       eventData.minPlayers || 2
     );
+  }
+
+  @Post(':id/open-lobby')
+  async openLobby(@Param('id') id: string): Promise<Event | null> {
+    return this.eventService.openLobby(id);
   }
 }
