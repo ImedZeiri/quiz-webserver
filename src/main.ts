@@ -13,7 +13,7 @@ async function bootstrap() {
     });
 
     app.useWebSocketAdapter(new IoAdapter(app));
-
+    app.setGlobalPrefix('api');
     const port = process.env.PORT || 3000;
     await app.listen(port);
 
