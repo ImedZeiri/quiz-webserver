@@ -738,7 +738,10 @@ export class GatewayService {
     };
 
     updateCountdown();
-    this.currentLobby.countdownTimer = setInterval(updateCountdown, 1000);
+    // Additional null check before setting the timer
+    if (this.currentLobby) {
+      this.currentLobby.countdownTimer = setInterval(updateCountdown, 1000);
+    }
   }
 
   private async startEventIfReady() {
