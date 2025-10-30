@@ -40,3 +40,17 @@ export interface QuizCompletedResponse {
   winner?: string;
   isWinner: boolean;
 }
+
+export interface EventCompletedResponse {
+  eventId: string;
+  winner?: string;
+  winnerPhone?: string;
+  winnerDisplay?: string;
+}
+
+export interface WinnerInfo {
+  sessionId: string;
+  username?: string;
+  phoneNumber?: string;
+  userId?: string;
+}

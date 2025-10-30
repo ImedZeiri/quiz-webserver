@@ -14,10 +14,10 @@ export class EventService {
     return this.eventModel.find({ isCompleted: false }).sort({ startDate: 1 }).exec();
   }
 
-  async completeEvent(eventId: string, winner: string): Promise<Event | null> {
+  async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
     return this.eventModel.findByIdAndUpdate(
       eventId,
-      { winner, isCompleted: true },
+      { winner: winnerPhone, isCompleted: true },
       { new: true }
     ).exec();
   }

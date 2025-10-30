@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { QuestionService } from './question.service';
 import { EventService } from './event.service';
+import { UsersService } from './users.service';
 import { Question } from '../model/question.entity';
 import { Event } from '../model/event.entity';
 import type {
@@ -39,6 +40,7 @@ export class GatewayService {
   constructor(
     private readonly questionService: QuestionService,
     private readonly eventService: EventService,
+    private readonly usersService: UsersService,
   ) {
     this.initializeNextEvent();
     this.startEventScheduler();
@@ -383,7 +385,10 @@ export class GatewayService {
       clearInterval(this.globalQuiz.timerInterval);
     if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
 
-    let winner: string | null = null;
+    let winnerSessionId: string | null = null;
+    let winnerUsername: string | null = null;
+    let winnerPhone: string | null = null;
+    
     if (this.globalQuiz.event && this.globalQuiz.participants.size > 0) {
       const participants = Array.from(this.globalQuiz.participants.values())
         .filter((p: QuizParticipant) => p.finishedAt)
@@ -393,13 +398,36 @@ export class GatewayService {
         });
 
       if (participants.length > 0) {
-        winner = participants[0].clientId;
-        await this.eventService.completeEvent(this.globalQuiz.event.id, winner!);
+        winnerSessionId = participants[0].clientId;
+        
+        // Récupérer les informations complètes du gagnant
+        const winnerInfo = await this.getWinnerInfo(winnerSessionId);
+        winnerUsername = winnerInfo.username || null;
+        winnerPhone = winnerInfo.phoneNumber || null;
+        
+        // Enregistrer le numéro de téléphone comme identifiant du gagnant
+        if (winnerPhone) {
+          await this.eventService.completeEvent(this.globalQuiz.event.id, winnerPhone);
+          console.log('🏆 GAGNANT DE L\'ÉVÉNEMENT 🏆');
+          console.log('========================================');
+          console.log(`👤 Nom d'utilisateur: ${winnerUsername || 'N/A'}`);
+          console.log(`📱 Numéro de téléphone: ${winnerPhone}`);
+          console.log(`🆔 Session ID: ${winnerSessionId}`);
+          console.log(`🎯 Événement: ${this.globalQuiz.event.theme}`);
+          console.log('========================================');
+        } else {
+          // Fallback: utiliser la session ID si pas de téléphone
+          await this.eventService.completeEvent(this.globalQuiz.event.id, winnerSessionId);
+          console.log('⚠️  GAGNANT SANS TÉLÉPHONE IDENTIFIÉ');
+          console.log(`Session ID utilisée: ${winnerSessionId}`);
+        }
       }
 
       this.server.emit('eventCompleted', {
         eventId: this.globalQuiz.event.id,
-        winner,
+        winner: winnerUsername || winnerSessionId, // Afficher le nom d'utilisateur ou session ID
+        winnerPhone: winnerPhone, // Ajouter le téléphone pour référence
+        winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${winnerSessionId}`,
       });
     }
 
@@ -411,8 +439,8 @@ export class GatewayService {
           totalQuestions: session.questions.length,
           answers: session.answers,
           joinedAt: session.joinedAt,
-          winner,
-          isWinner: clientId === winner,
+          winner: winnerUsername || winnerSessionId, // Afficher le nom d'utilisateur
+          isWinner: clientId === winnerSessionId,
         });
       }
     });
@@ -475,6 +503,47 @@ export class GatewayService {
       console.warn('Impossible d\'extraire l\'ID utilisateur du token');
       return undefined;
     }
+  }
+
+  private extractUserInfoFromToken(token: string): { userId?: string; username?: string } {
+    try {
+      const cleanToken = token.replace('Bearer ', '');
+      const payload = JSON.parse(atob(cleanToken.split('.')[1]));
+      return {
+        userId: payload.sub || payload.userId || payload.id,
+        username: payload.username
+      };
+    } catch (error) {
+      console.warn('Impossible d\'extraire les informations utilisateur du token');
+      return {};
+    }
+  }
+
+  private async getWinnerInfo(sessionId: string): Promise<{ username?: string; phoneNumber?: string; userId?: string }> {
+    const userSession = this.userSessions.get(sessionId);
+    if (!userSession || !userSession.token) {
+      return {};
+    }
+
+    const tokenInfo = this.extractUserInfoFromToken(userSession.token);
+    const result: { username?: string; phoneNumber?: string; userId?: string } = {
+      username: tokenInfo.username,
+      userId: tokenInfo.userId
+    };
+
+    // Récupérer le numéro de téléphone depuis la base de données
+    if (tokenInfo.userId) {
+      try {
+        const user = await this.usersService.findById(tokenInfo.userId);
+        if (user) {
+          result.phoneNumber = user.phoneNumber;
+        }
+      } catch (error) {
+        console.error('Erreur lors de la récupération des données utilisateur:', error);
+      }
+    }
+
+    return result;
   }
 
   private updateUserParticipation(clientId: string, isParticipating: boolean, mode?: 'play' | 'watch') {
