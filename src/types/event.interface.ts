@@ -24,6 +24,13 @@ export interface QuizParticipant {
   clientId: string;
   score: number;
   finishedAt?: Date;
+  lastCorrectAnswerTime?: number;
+  answers: Array<{
+    questionId: number;
+    userAnswer: number;
+    correct: boolean;
+    submittedAt: number;
+  }>;
 }
 
 export interface CreateEventData {

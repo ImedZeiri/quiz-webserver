@@ -18,6 +18,7 @@ export interface QuizAnswer {
   questionId: number;
   userAnswer: number;
   correct: boolean;
+  submittedAt?: number;
 }
 
 export interface PendingAnswer {

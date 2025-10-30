@@ -152,6 +152,7 @@ export class GatewayService {
         this.globalQuiz.participants.set(clientId, {
           clientId,
           score: 0,
+          answers: [],
         } as QuizParticipant);
       }
       this.updateUserParticipation(clientId, true, 'watch');
@@ -181,6 +182,7 @@ export class GatewayService {
     this.globalQuiz.participants.set(clientId, {
       clientId,
       score: 0,
+      answers: [],
     } as QuizParticipant);
 
     const session: QuizSession = {
@@ -357,11 +359,27 @@ export class GatewayService {
           session.isWatching = true;
         }
 
-        session.answers.push({
+        const submittedAt = Date.now();
+        const answerData = {
           questionId: currentQuestion.id,
           userAnswer,
           correct: isCorrect,
-        });
+          submittedAt,
+        };
+        
+        session.answers.push(answerData);
+        
+        // Mettre à jour les données du participant
+        const participant = this.globalQuiz!.participants?.get(clientId);
+        if (participant) {
+          participant.answers.push(answerData);
+          if (isCorrect) {
+            participant.lastCorrectAnswerTime = submittedAt;
+          } else {
+            // Si la réponse est incorrecte, réinitialiser le temps de dernière réponse correcte
+            participant.lastCorrectAnswerTime = undefined;
+          }
+        }
 
         session.pendingAnswer = undefined;
       }
@@ -391,15 +409,27 @@ export class GatewayService {
     let winnerPhone: string | null = null;
     
     if (this.globalQuiz.event && this.globalQuiz.participants.size > 0) {
+      // Nouvelle logique de gagnant: celui avec la dernière réponse correcte la plus rapide
       const participants = Array.from(this.globalQuiz.participants.values())
-        .filter((p: QuizParticipant) => p.finishedAt)
+        .filter((p: QuizParticipant) => p.lastCorrectAnswerTime) // Seulement ceux qui ont au moins une réponse correcte
         .sort((a: QuizParticipant, b: QuizParticipant) => {
-          if (a.score !== b.score) return b.score - a.score;
-          return a.finishedAt!.getTime() - b.finishedAt!.getTime();
+          // Trier par temps de la dernière réponse correcte (le plus rapide gagne)
+          return a.lastCorrectAnswerTime! - b.lastCorrectAnswerTime!;
         });
 
       if (participants.length > 0) {
         winnerSessionId = participants[0].clientId;
+        
+        console.log('🏆 DÉTERMINATION DU GAGNANT 🏆');
+        console.log('========================================');
+        console.log('Participants avec réponses correctes:');
+        participants.forEach((p, index) => {
+          const lastCorrectTime = new Date(p.lastCorrectAnswerTime!).toLocaleTimeString();
+          console.log(`${index + 1}. Session: ${p.clientId} - Dernière réponse correcte: ${lastCorrectTime}`);
+        });
+        console.log(`🥇 GAGNANT: ${winnerSessionId}`);
+        console.log('========================================');
+        
         
         // Récupérer les informations complètes du gagnant
         const winnerInfo = await this.getWinnerInfo(winnerSessionId);
@@ -409,19 +439,23 @@ export class GatewayService {
         // Enregistrer le numéro de téléphone comme identifiant du gagnant
         if (winnerPhone) {
           await this.eventService.completeEvent(this.globalQuiz.event.id, winnerPhone);
-          console.log('🏆 GAGNANT DE L\'ÉVÉNEMENT 🏆');
+          console.log('🏆 GAGNANT FINAL DE L\'ÉVÉNEMENT 🏆');
           console.log('========================================');
           console.log(`👤 Nom d'utilisateur: ${winnerUsername || 'N/A'}`);
           console.log(`📱 Numéro de téléphone: ${winnerPhone}`);
           console.log(`🆔 Session ID: ${winnerSessionId}`);
           console.log(`🎯 Événement: ${this.globalQuiz.event.theme}`);
+          console.log(`⏰ Dernière réponse correcte: ${new Date(participants[0].lastCorrectAnswerTime!).toLocaleTimeString()}`);
           console.log('========================================');
         } else {
           // Fallback: utiliser la session ID si pas de téléphone
           await this.eventService.completeEvent(this.globalQuiz.event.id, winnerSessionId);
           console.log('⚠️  GAGNANT SANS TÉLÉPHONE IDENTIFIÉ');
           console.log(`Session ID utilisée: ${winnerSessionId}`);
+          console.log(`⏰ Dernière réponse correcte: ${new Date(participants[0].lastCorrectAnswerTime!).toLocaleTimeString()}`);
         }
+      } else {
+        console.log('❌ Aucun participant avec réponse correcte trouvé');
       }
 
       this.server.emit('eventCompleted', {
@@ -763,6 +797,7 @@ export class GatewayService {
       this.globalQuiz!.participants.set(clientId, {
         clientId,
         score: 0,
+        answers: [],
       } as QuizParticipant);
 
       const session: QuizSession = {
