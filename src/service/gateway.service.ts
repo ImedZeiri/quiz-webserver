@@ -505,13 +505,14 @@ export class GatewayService {
     }
   }
 
-  private extractUserInfoFromToken(token: string): { userId?: string; username?: string } {
+  private extractUserInfoFromToken(token: string): { userId?: string; username?: string; phoneNumber?: string } {
     try {
       const cleanToken = token.replace('Bearer ', '');
       const payload = JSON.parse(atob(cleanToken.split('.')[1]));
       return {
         userId: payload.sub || payload.userId || payload.id,
-        username: payload.username
+        username: payload.username,
+        phoneNumber: payload.phoneNumber
       };
     } catch (error) {
       console.warn('Impossible d\'extraire les informations utilisateur du token');
@@ -526,24 +527,11 @@ export class GatewayService {
     }
 
     const tokenInfo = this.extractUserInfoFromToken(userSession.token);
-    const result: { username?: string; phoneNumber?: string; userId?: string } = {
+    return {
       username: tokenInfo.username,
+      phoneNumber: tokenInfo.phoneNumber,
       userId: tokenInfo.userId
     };
-
-    // Récupérer le numéro de téléphone depuis la base de données
-    if (tokenInfo.userId) {
-      try {
-        const user = await this.usersService.findById(tokenInfo.userId);
-        if (user) {
-          result.phoneNumber = user.phoneNumber;
-        }
-      } catch (error) {
-        console.error('Erreur lors de la récupération des données utilisateur:', error);
-      }
-    }
-
-    return result;
   }
 
   private updateUserParticipation(clientId: string, isParticipating: boolean, mode?: 'play' | 'watch') {
