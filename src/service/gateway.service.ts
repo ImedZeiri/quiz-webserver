@@ -45,9 +45,11 @@ export class GatewayService {
     this.initializeNextEvent();
     this.startEventScheduler();
     // Vérification immédiate des événements au démarrage
-    setTimeout(() => this.checkPendingEvents(), 2000);
+    setTimeout(() => this.checkAndOpenLobbyIfNeeded(), 1000);
     // Vérification périodique pour debug
     setInterval(() => this.debugEventStatus(), 30000);
+    // Vérification de sécurité toutes les minutes
+    setInterval(() => this.emergencyLobbyCheck(), 60000);
   }
 
   setServer(server: Server) {
@@ -90,11 +92,10 @@ export class GatewayService {
       connectedAt: new Date()
     });
     
-    this.sendNextEventInfo(clientId);
+    // Vérification immédiate des événements à chaque connexion
+    this.checkAndOpenLobbyIfNeeded();
     
-    if (!this.currentLobby) {
-      this.checkPendingEvents();
-    }
+    this.sendNextEventInfo(clientId);
     
     if (this.currentLobby) {
       this.sendLobbyInfo(clientId);
@@ -619,29 +620,40 @@ export class GatewayService {
   }
 
   private startEventScheduler() {
+    // Vérification plus fréquente pour une meilleure réactivité
     setInterval(async () => {
-      if (this.currentLobby) return;
-      
-      const eventsReady = await this.eventService.getEventsReadyForLobby();
-      
-      for (const event of eventsReady) {
-        const now = new Date().getTime();
-        const eventTime = new Date(event.startDate).getTime();
-        const lobbyTime = eventTime - 5 * 60 * 1000;
-        const endTime = eventTime + 2 * 60 * 1000;
+      try {
+        if (this.currentLobby) return;
         
-        // Ouvrir le lobby si on est dans la fenêtre de 5 min avant à 2 min après l'événement
-        if (now >= lobbyTime && now <= endTime && !event.lobbyOpen) {
-          console.log(`Ouverture automatique du lobby pour: ${event.theme}`);
-          console.log(`Heure actuelle: ${new Date(now).toLocaleString()}`);
-          console.log(`Heure événement: ${new Date(eventTime).toLocaleString()}`);
-          console.log(`Heure lobby: ${new Date(lobbyTime).toLocaleString()}`);
-          console.log(`Fenêtre lobby: ${new Date(lobbyTime).toLocaleString()} - ${new Date(endTime).toLocaleString()}`);
-          this.openEventLobby(event);
-          break; // Traiter un seul événement à la fois
-        }
+        await this.checkAndOpenLobbyIfNeeded();
+      } catch (error) {
+        console.error('❌ Erreur dans le scheduler d\'événements:', error);
       }
-    }, 5000); // Vérifier toutes les 5 secondes pour plus de réactivité
+    }, 3000); // Vérifier toutes les 3 secondes
+    
+    // Vérification de backup moins fréquente mais plus robuste
+    setInterval(async () => {
+      try {
+        if (this.currentLobby) return;
+        
+        const eventsReady = await this.eventService.getEventsReadyForLobby();
+        
+        for (const event of eventsReady) {
+          const now = new Date().getTime();
+          const eventTime = new Date(event.startDate).getTime();
+          const lobbyTime = eventTime - 5 * 60 * 1000;
+          const endTime = eventTime + 2 * 60 * 1000;
+          
+          if (now >= lobbyTime && now <= endTime) {
+            console.log(`🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`);
+            await this.openEventLobby(event);
+            break;
+          }
+        }
+      } catch (error) {
+        console.error('❌ Erreur dans le scheduler de backup:', error);
+      }
+    }, 10000); // Vérification de backup toutes les 10 secondes
   }
 
   private async openEventLobby(event: Event) {
@@ -937,6 +949,62 @@ export class GatewayService {
     console.log('=== FIN VÉRIFICATION ===\n');
   }
 
+  private async checkAndOpenLobbyIfNeeded() {
+    try {
+      console.log('🔍 VÉRIFICATION IMMÉDIATE À LA CONNEXION');
+      
+      if (this.currentLobby) {
+        console.log('✅ Lobby déjà ouvert');
+        return;
+      }
+      
+      // Récupérer tous les événements actifs
+      const activeEvents = await this.eventService.findActiveEvents();
+      console.log(`📋 ${activeEvents.length} événements actifs trouvés`);
+      
+      const now = new Date().getTime();
+      
+      for (const event of activeEvents) {
+        const eventTime = new Date(event.startDate).getTime();
+        const lobbyTime = eventTime - 5 * 60 * 1000; // 5 minutes avant
+        const endTime = eventTime + 2 * 60 * 1000; // 2 minutes après
+        const timeUntilEvent = Math.round((eventTime - now) / 1000);
+        
+        console.log(`\n🎯 Événement: ${event.theme}`);
+        console.log(`⏰ Temps jusqu'à l'événement: ${timeUntilEvent}s`);
+        console.log(`🚪 Lobby ouvert en DB: ${event.lobbyOpen}`);
+        console.log(`📅 Dans la fenêtre de lobby: ${now >= lobbyTime && now <= endTime}`);
+        
+        // Conditions pour ouvrir le lobby:
+        // 1. L'événement commence dans moins de 5 minutes OU a commencé il y a moins de 2 minutes
+        // 2. Le lobby n'est pas encore marqué comme ouvert OU on force la vérification
+        if (now >= lobbyTime && now <= endTime) {
+          console.log('🚀 CONDITIONS REMPLIES - OUVERTURE DU LOBBY');
+          
+          await this.openEventLobby(event);
+          
+          // Notifier tous les clients connectés
+          this.server.emit('lobbyOpened', {
+            event: {
+              id: event.id,
+              theme: event.theme || 'Questions Aléatoires',
+              numberOfQuestions: event.numberOfQuestions,
+              startDate: event.startDate,
+              minPlayers: event.minPlayers,
+            },
+          });
+          
+          console.log('✅ Lobby ouvert avec succès!');
+          break; // Traiter un seul événement à la fois
+        }
+      }
+      
+      console.log('🔍 FIN VÉRIFICATION IMMÉDIATE\n');
+    } catch (error) {
+      console.error('❌ Erreur lors de la vérification des événements:', error);
+    }
+  }
+
   private async debugEventStatus() {
     const now = new Date();
     const events = await this.eventService.findActiveEvents();
@@ -961,5 +1029,58 @@ export class GatewayService {
       console.log(`Temps jusqu'au lobby: ${Math.round((lobbyTime - nowTime) / 1000)}s`);
     }
     console.log('===================\n');
+  }
+
+  private async emergencyLobbyCheck() {
+    try {
+      console.log('🚨 VÉRIFICATION D\'URGENCE DES LOBBIES');
+      
+      if (this.currentLobby) {
+        console.log('✅ Lobby déjà ouvert, pas d\'action nécessaire');
+        return;
+      }
+      
+      // Récupérer tous les événements dans la fenêtre de lobby
+      const eventsInWindow = await this.eventService.getEventsInLobbyWindow();
+      
+      if (eventsInWindow.length > 0) {
+        console.log(`⚠️  ALERTE: ${eventsInWindow.length} événement(s) dans la fenêtre de lobby mais aucun lobby ouvert!`);
+        
+        for (const event of eventsInWindow) {
+          const now = new Date().getTime();
+          const eventTime = new Date(event.startDate).getTime();
+          const timeUntilEvent = Math.round((eventTime - now) / 1000);
+          
+          console.log(`🔧 CORRECTION: Ouverture forcée du lobby pour "${event.theme}" (dans ${timeUntilEvent}s)`);
+          
+          await this.openEventLobby(event);
+          
+          // Notifier tous les clients
+          this.server.emit('emergencyLobbyOpened', {
+            event: {
+              id: event.id,
+              theme: event.theme || 'Questions Aléatoires',
+              numberOfQuestions: event.numberOfQuestions,
+              startDate: event.startDate,
+              minPlayers: event.minPlayers,
+            },
+            message: 'Lobby ouvert automatiquement - événement imminent!'
+          });
+          
+          break; // Traiter un seul événement
+        }
+      } else {
+        console.log('✅ Aucun événement dans la fenêtre de lobby');
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors de la vérification d\'urgence:', error);
+    }
+  }
+
+  // Méthode publique pour forcer la vérification (utile pour les tests)
+  async forceEventCheck() {
+    console.log('🔄 VÉRIFICATION FORCÉE DEMANDÉE');
+    await this.checkAndOpenLobbyIfNeeded();
+    await this.emergencyLobbyCheck();
   }
 }

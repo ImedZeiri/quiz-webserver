@@ -54,4 +54,38 @@ export class GatewayController
   async handleAuthenticate(client: Socket, payload: { token: string }) {
     this.gatewayService.authenticateUser(client.id, payload.token);
   }
+
+  @SubscribeMessage('checkEvents')
+  async handleCheckEvents(client: Socket) {
+    await this.gatewayService.forceEventCheck();
+    client.emit('eventsChecked', {
+      message: 'Vérification des événements effectuée',
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  @SubscribeMessage('requestLobbyStatus')
+  async handleRequestLobbyStatus(client: Socket) {
+    // Envoyer le statut actuel du lobby au client
+    if (this.gatewayService['currentLobby']) {
+      const lobby = this.gatewayService['currentLobby'];
+      client.emit('lobbyStatus', {
+        isOpen: true,
+        event: {
+          id: lobby.event.id,
+          theme: lobby.event.theme,
+          startDate: lobby.event.startDate,
+          numberOfQuestions: lobby.event.numberOfQuestions,
+          minPlayers: lobby.event.minPlayers
+        },
+        participants: lobby.participants.size
+      });
+    } else {
+      client.emit('lobbyStatus', {
+        isOpen: false,
+        event: null,
+        participants: 0
+      });
+    }
+  }
 }
