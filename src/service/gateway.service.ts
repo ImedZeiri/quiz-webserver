@@ -158,6 +158,7 @@ export class GatewayService {
       this.updateUserParticipation(clientId, true, 'watch');
       this.sendCurrentQuestion(client!, session);
       this.broadcastPlayerStats();
+      this.broadcastUserStats();
       return;
     }
 
@@ -199,6 +200,7 @@ export class GatewayService {
     this.quizSessions.set(clientId, session);
     this.updateUserParticipation(clientId, true, 'play');
     this.startGlobalQuiz();
+    this.broadcastUserStats();
     } catch (error) {
       console.error('Erreur lors du démarrage du quiz:', error);
       const client = this.server.sockets.sockets.get(clientId);
@@ -354,9 +356,11 @@ export class GatewayService {
             }
           } else {
             session.isWatching = true;
+            this.updateUserParticipation(clientId, true, 'watch');
           }
         } else if (!session.isWatching) {
           session.isWatching = true;
+           this.updateUserParticipation(clientId, true, 'watch');
         }
 
         const submittedAt = Date.now();
@@ -384,7 +388,9 @@ export class GatewayService {
         session.pendingAnswer = undefined;
       }
     });
-
+    // BROADCAST UPDATED STATS AFTER ALL STATE CHANGES
+    this.broadcastUserStats();
+    this.broadcastPlayerStats();
     this.globalQuiz.currentQuestionIndex++;
 
     if (
@@ -466,19 +472,22 @@ export class GatewayService {
       });
     }
 
-    this.quizSessions.forEach((session, clientId) => {
-      const client = this.server.sockets.sockets.get(clientId);
-      if (client) {
-        client.emit('quizCompleted', {
-          score: session.score,
-          totalQuestions: session.questions.length,
-          answers: session.answers,
-          joinedAt: session.joinedAt,
-          winner: winnerUsername || winnerSessionId, // Afficher le nom d'utilisateur
-          isWinner: clientId === winnerSessionId,
-        });
-      }
-    });
+    // RESET ALL USER PARTICIPATION STATES
+  this.quizSessions.forEach((session, clientId) => {
+    const client = this.server.sockets.sockets.get(clientId);
+    if (client) {
+      client.emit('quizCompleted', {
+        score: session.score,
+        totalQuestions: session.questions.length,
+        answers: session.answers,
+        joinedAt: session.joinedAt,
+        winner: winnerUsername || winnerSessionId,
+        isWinner: clientId === winnerSessionId,
+      });
+    }
+    // Reset participation state for all users
+    this.updateUserParticipation(clientId, false, undefined);
+  });
 
     setTimeout(() => {
       this.server.disconnectSockets(true);
@@ -486,6 +495,7 @@ export class GatewayService {
 
     this.globalQuiz = null;
     this.quizSessions.clear();
+    this.broadcastUserStats();
   }
 
   private getPlayerStats(): PlayerStats {
