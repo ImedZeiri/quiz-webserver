@@ -54,3 +54,22 @@ export interface WinnerInfo {
   phoneNumber?: string;
   userId?: string;
 }
+
+export interface StartSoloQuizPayload {
+  theme?: string;
+}
+
+export interface SoloQuestion {
+  id: number;
+  theme: string;
+  questionText: string;
+  response1: string;
+  response2: string;
+  response3: string;
+  response4: string;
+  correctResponse: number;
+}
+
+export interface SoloQuestionsResponse {
+  questions: SoloQuestion[];
+}

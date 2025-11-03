@@ -115,4 +115,13 @@ export class EventService {
     
     return result;
   }
+
+  async updateEvent(eventId: string, updates: Partial<Event>): Promise<Event | null> {
+    const result = await this.eventModel.findByIdAndUpdate(
+      eventId,
+      updates,
+      { new: true }
+    ).exec();
+    return result;
+  }
 }
