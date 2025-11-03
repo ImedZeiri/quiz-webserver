@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Inject } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Inject, Put } from '@nestjs/common';
 import { EventService } from '../service/event.service';
 import { GatewayService } from '../service/gateway.service';
 import { Event } from '../model/event.entity';
@@ -53,5 +53,22 @@ export class EventController {
       message: 'Vérification forcée des lobbies effectuée',
       timestamp: new Date().toISOString()
     };
+  }
+
+  @Put(':id')
+  async updateEvent(
+    @Param('id') id: string,
+    @Body()
+    updates: Partial<Pick<Event, 'theme' | 'startDate' | 'numberOfQuestions' | 'minPlayers' | 'lobbyOpen'>>,
+  ): Promise<Event | null> {
+    const normalized: any = { ...updates };
+    if (updates.startDate) {
+      normalized.startDate = new Date(updates.startDate as any);
+    }
+    const updated = await this.eventService.updateEvent(id, normalized);
+    if (updated) {
+      await this.gatewayService.handleEventUpdated(updated);
+    }
+    return updated;
   }
 }

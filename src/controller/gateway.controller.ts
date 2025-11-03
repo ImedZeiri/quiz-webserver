@@ -7,7 +7,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { GatewayService } from '../service/gateway.service';
-import type { StartQuizPayload, SubmitAnswerPayload } from 'src/types/websocket.interface';
+import type { StartQuizPayload, SubmitAnswerPayload, StartSoloQuizPayload } from 'src/types/websocket.interface';
 
 @WebSocketGateway({
   cors: {
@@ -35,10 +35,7 @@ export class GatewayController
     this.gatewayService.handleDisconnection(client.id);
   }
 
-  @SubscribeMessage('startQuiz')
-  async handleStartQuiz(client: Socket, payload: StartQuizPayload) {
-    await this.gatewayService.startQuiz(client.id, payload);
-  }
+  // Handler startQuiz supprimé - les utilisateurs ne peuvent plus créer de quiz manuellement
 
   @SubscribeMessage('submitAnswer')
   async handleSubmitAnswer(client: Socket, payload: SubmitAnswerPayload) {
@@ -53,6 +50,21 @@ export class GatewayController
   @SubscribeMessage('authenticate')
   async handleAuthenticate(client: Socket, payload: { token: string }) {
     this.gatewayService.authenticateUser(client.id, payload.token);
+  }
+
+  @SubscribeMessage('startSoloQuiz')
+  async handleStartSoloQuiz(client: Socket, payload: StartSoloQuizPayload) {
+    await this.gatewayService.startSoloQuiz(client.id, payload);
+  }
+
+  @SubscribeMessage('leaveLobby')
+  async handleLeaveLobby(client: Socket) {
+    this.gatewayService.leaveLobby(client.id);
+  }
+
+  @SubscribeMessage('joinInProgress')
+  async handleJoinInProgress(client: Socket) {
+    this.gatewayService.joinOngoingEvent(client.id);
   }
 
   @SubscribeMessage('checkEvents')
