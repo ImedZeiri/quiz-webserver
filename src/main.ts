@@ -7,9 +7,15 @@ async function bootstrap() {
   try {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
     app.enableCors({
-      origin: '*',
+      origin: [
+        'http://localhost:4200', 
+        'http://127.0.0.1:4200',
+        'https://www.quiztn.com', 
+        'https://quiztn.com'
+      ],
       methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
       credentials: true,
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
     });
 
     app.useWebSocketAdapter(new IoAdapter(app));
