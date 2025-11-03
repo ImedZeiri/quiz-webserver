@@ -562,7 +562,7 @@ export class GatewayService {
       } catch (error) {
         console.error('❌ Erreur dans le scheduler d\'événements:', error);
       }
-    }, 3000);
+    }, 80);
 
     setInterval(async () => {
       try {

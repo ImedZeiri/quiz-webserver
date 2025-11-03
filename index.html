@@ -831,7 +831,7 @@
       </div>
     </div>
     <script>
-      const socket = io('http://localhost:3000');
+      const socket = io('http://localhost:80');
       let currentQuestion = null;
       let selectedAnswer = null;
       let gameMode = null;
@@ -1633,7 +1633,7 @@
         setTimeout(() => {
           notification.style.animation = 'slideOutRight 0.3s ease';
           setTimeout(() => notification.remove(), 300);
-        }, 3000);
+        }, 80);
       }
       function updateMultiplayerStatus() {
         const noLobbyMessage = document.getElementById('no-lobby-message');
