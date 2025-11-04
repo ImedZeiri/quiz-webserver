@@ -23,10 +23,10 @@ async function bootstrap() {
     const port = process.env.PORT || 80;
     await app.listen(port);
 
-    console.log(`✅ HTTP Server is running on: http://localhost:${port}`);
-    console.log(`💬 WebSocket Server is running on: ws://localhost:${port}`);
+    console.log(` HTTP Server is running on: http://localhost:${port}`);
+    console.log(` WebSocket Server is running on: ws://localhost:${port}`);
   } catch (error) {
-    console.error('❌ Error starting server:', error);
+    console.error(' Error starting server:', error);
     process.exit(1);
   }
 }
