@@ -128,50 +128,50 @@ export class GatewayService {
   }
 
   handleConnection(clientId: string) {
-    console.log(`Client connected: ${clientId}`);
-    
-    this.userSessions.set(clientId, {
-      socketId: clientId,
-      token: '',
-      isConnected: true,
-      isParticipating: false,
-      isAuthenticated: false,
-      userType: 'guest',
-      connectedAt: new Date()
-    });
-    
-    this.checkAndOpenLobbyIfNeeded();
-    this.sendNextEventInfo(clientId);
-    
-    if (this.currentLobby) {
-      this.sendLobbyInfo(clientId);
-      this.sendEventCountdown(clientId);
-    }
-    this.broadcastPlayerStats();
-    this.broadcastUserStats();
+  console.log(`Client connected: ${clientId}`);
+  
+  this.userSessions.set(clientId, {
+    socketId: clientId,
+    token: '',
+    isConnected: true,
+    isParticipating: false,
+    isAuthenticated: false,
+    userType: 'guest',
+    connectedAt: new Date()
+  });
+  
+  this.checkAndOpenLobbyIfNeeded();
+  this.sendNextEventInfo(clientId);
+  
+  if (this.currentLobby) {
+    this.sendLobbyInfo(clientId);
+    this.sendEventCountdown(clientId);
   }
+  this.broadcastPlayerStats();
+  this.broadcastUserStats(); // ADD THIS
+}
 
-  handleDisconnection(clientId: string) {
-    console.log(`Client disconnected: ${clientId}`);
-    
-    this.userSessions.delete(clientId);
-    
-    const session = this.quizSessions.get(clientId);
-    if (session?.timer) clearTimeout(session.timer);
-    if (session?.timerInterval) clearInterval(session.timerInterval);
-    this.quizSessions.delete(clientId);
-    if (this.globalQuiz?.participants) {
-      this.globalQuiz.participants.delete(clientId);
-    }
-    
-    if (this.currentLobby?.participants.has(clientId)) {
-      this.currentLobby.participants.delete(clientId);
-      console.log(`Joueur ${clientId} retiré du lobby. Total: ${this.currentLobby.participants.size}`);
-      this.broadcastLobbyUpdate();
-    }
-    this.broadcastPlayerStats();
-    this.broadcastUserStats();
+handleDisconnection(clientId: string) {
+  console.log(`Client disconnected: ${clientId}`);
+  
+  this.userSessions.delete(clientId);
+  
+  const session = this.quizSessions.get(clientId);
+  if (session?.timer) clearTimeout(session.timer);
+  if (session?.timerInterval) clearInterval(session.timerInterval);
+  this.quizSessions.delete(clientId);
+  if (this.globalQuiz?.participants) {
+    this.globalQuiz.participants.delete(clientId);
   }
+  
+  if (this.currentLobby?.participants.has(clientId)) {
+    this.currentLobby.participants.delete(clientId);
+    console.log(`Joueur ${clientId} retiré du lobby. Total: ${this.currentLobby.participants.size}`);
+    this.broadcastLobbyUpdate();
+  }
+  this.broadcastPlayerStats();
+  this.broadcastUserStats();
+}
 
   async startSoloQuiz(clientId: string, payload: { theme?: string }) {
     try {
@@ -298,68 +298,75 @@ export class GatewayService {
     });
   }
 
-  private handleGlobalTimeExpired() {
-    if (!this.globalQuiz) return;
+ private handleGlobalTimeExpired() {
+  if (!this.globalQuiz) return;
 
-    if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
-    if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
+  if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
+  if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
 
-    this.quizSessions.forEach((session, clientId) => {
-      if (session.currentIndex === this.globalQuiz!.currentQuestionIndex) {
-        const currentQuestion = session.questions[session.currentIndex];
-        let userAnswer = 0;
-        let isCorrect = false;
+  this.quizSessions.forEach((session, clientId) => {
+    if (session.currentIndex === this.globalQuiz!.currentQuestionIndex) {
+      const currentQuestion = session.questions[session.currentIndex];
+      let userAnswer = 0;
+      let isCorrect = false;
 
-        if (!session.isWatching && session.pendingAnswer && session.pendingAnswer.questionId === currentQuestion.id) {
-          userAnswer = session.pendingAnswer.answer;
-          isCorrect = currentQuestion.correctResponse === userAnswer;
-          if (isCorrect) {
-            session.score++;
-            const participant = this.globalQuiz!.participants?.get(clientId);
-            if (participant) {
-              participant.score = session.score;
-              if (this.globalQuiz!.currentQuestionIndex === this.globalQuiz!.questions.length - 1) {
-                participant.finishedAt = new Date();
-              }
+      if (!session.isWatching && session.pendingAnswer && session.pendingAnswer.questionId === currentQuestion.id) {
+        userAnswer = session.pendingAnswer.answer;
+        isCorrect = currentQuestion.correctResponse === userAnswer;
+        if (isCorrect) {
+          session.score++;
+          const participant = this.globalQuiz!.participants?.get(clientId);
+          if (participant) {
+            participant.score = session.score;
+            if (this.globalQuiz!.currentQuestionIndex === this.globalQuiz!.questions.length - 1) {
+              participant.finishedAt = new Date();
             }
-          } else {
-            session.isWatching = true;
           }
-        } else if (!session.isWatching) {
+        } else {
+          // USER NOW GOES TO WATCH MODE - UPDATE THEIR PARTICIPATION
           session.isWatching = true;
+          this.updateUserParticipation(clientId, true, 'watch');
         }
-
-        const submittedAt = Date.now();
-        const answerData = {
-          questionId: currentQuestion.id,
-          userAnswer,
-          correct: isCorrect,
-          submittedAt,
-        };
-        
-        session.answers.push(answerData);
-        const participant = this.globalQuiz!.participants?.get(clientId);
-        if (participant) {
-          participant.answers.push(answerData);
-          if (isCorrect) {
-            participant.lastCorrectAnswerTime = submittedAt;
-          } else {
-            participant.lastCorrectAnswerTime = undefined;
-          }
-        }
-        session.pendingAnswer = undefined;
+      } else if (!session.isWatching) {
+        // USER DIDN'T ANSWER - GO TO WATCH MODE
+        session.isWatching = true;
+        this.updateUserParticipation(clientId, true, 'watch');
       }
-    });
 
-    this.globalQuiz.currentQuestionIndex++;
-
-    if (this.globalQuiz.currentQuestionIndex >= this.globalQuiz.questions.length) {
-      this.completeGlobalQuiz();
-    } else {
-      this.globalQuiz.timeLeft = this.globalQuiz.timeLimit;
-      this.startGlobalQuiz();
+      const submittedAt = Date.now();
+      const answerData = {
+        questionId: currentQuestion.id,
+        userAnswer,
+        correct: isCorrect,
+        submittedAt,
+      };
+      
+      session.answers.push(answerData);
+      const participant = this.globalQuiz!.participants?.get(clientId);
+      if (participant) {
+        participant.answers.push(answerData);
+        if (isCorrect) {
+          participant.lastCorrectAnswerTime = submittedAt;
+        } else {
+          participant.lastCorrectAnswerTime = undefined;
+        }
+      }
+      session.pendingAnswer = undefined;
     }
+  });
+
+  this.globalQuiz.currentQuestionIndex++;
+
+  if (this.globalQuiz.currentQuestionIndex >= this.globalQuiz.questions.length) {
+    this.completeGlobalQuiz();
+  } else {
+    this.globalQuiz.timeLeft = this.globalQuiz.timeLimit;
+    this.startGlobalQuiz();
   }
+  
+  // BROADCAST UPDATED USER STATS AFTER MODE CHANGES
+  this.broadcastUserStats();
+}
 
   private async completeGlobalQuiz() {
     if (!this.globalQuiz) return;
@@ -474,14 +481,19 @@ export class GatewayService {
     return this.extractUserInfoFromToken(userSession.token);
   }
 
-  private updateUserParticipation(clientId: string, isParticipating: boolean, mode?: 'play' | 'watch') {
-    const userSession = this.userSessions.get(clientId);
-    if (userSession) {
-      userSession.isParticipating = isParticipating;
-      userSession.participationMode = mode;
-      this.broadcastUserStats();
-    }
+ private updateUserParticipation(clientId: string, isParticipating: boolean, mode?: 'play' | 'watch') {
+  const userSession = this.userSessions.get(clientId);
+  if (userSession) {
+    userSession.isParticipating = isParticipating;
+    userSession.participationMode = mode;
+    console.log(`🔄 Updated user ${clientId} participation:`, { 
+      isParticipating, 
+      mode,
+      previousMode: userSession.participationMode 
+    });
+    this.broadcastUserStats(); // Ensure stats are broadcast immediately
   }
+}
 
   private getUserStats() {
     const sessions = Array.from(this.userSessions.values());
@@ -732,47 +744,73 @@ export class GatewayService {
   }
 
   // Permet de rejoindre un événement déjà en cours en mode "watch"
-  joinOngoingEvent(clientId: string) {
-    if (!this.isGlobalQuizActive() || !this.globalQuiz) {
-      const client = this.server.sockets.sockets.get(clientId);
-      client?.emit('error', { message: 'Aucun événement en cours' });
-      return;
-    }
-
-    // Si la session existe déjà, renvoyer la question courante
-    const existingSession = this.quizSessions.get(clientId);
+ joinOngoingEvent(clientId: string) {
+  if (!this.isGlobalQuizActive() || !this.globalQuiz) {
     const client = this.server.sockets.sockets.get(clientId);
-    if (existingSession) {
-      this.sendCurrentQuestion(client!, existingSession);
-      client?.emit('joinedInProgress', { mode: 'watch' });
-      return;
-    }
-
-    // Décider du mode: joueur si première question non écoulée, sinon watcher
-    const isFirstQuestionActive = this.globalQuiz.currentQuestionIndex === 0 && this.globalQuiz.timeLeft > 0;
-    const isWatching = !isFirstQuestionActive;
-
-    const session: QuizSession = {
-      questions: this.globalQuiz.questions,
-      currentIndex: this.globalQuiz.currentQuestionIndex,
-      score: 0,
-      answers: [],
-      isWatching,
-      timeLimit: this.globalQuiz.timeLimit,
-      timeLeft: this.globalQuiz.timeLeft,
-      joinedAt: this.globalQuiz.currentQuestionIndex,
-    };
-
-    this.quizSessions.set(clientId, session);
-    // Ajouter le participant, même pour watch (score par défaut 0)
-    this.globalQuiz.participants.set(clientId, { clientId, score: 0, answers: [] } as QuizParticipant);
-    this.updateUserParticipation(clientId, true, isWatching ? 'watch' : 'play');
-
-    // Envoyer immédiatement la question courante
-    this.sendCurrentQuestion(client!, session);
-    client?.emit('joinedInProgress', { mode: isWatching ? 'watch' : 'play' });
-    this.broadcastPlayerStats();
+    client?.emit('error', { message: 'Aucun événement en cours' });
+    return;
   }
+
+  // If the session exists already, just update the mode if needed
+  const existingSession = this.quizSessions.get(clientId);
+  const client = this.server.sockets.sockets.get(clientId);
+  
+  if (existingSession) {
+    // If user was playing but should now be watching, update their mode
+    if (!existingSession.isWatching && this.shouldBeInWatchMode(clientId)) {
+      existingSession.isWatching = true;
+      this.updateUserParticipation(clientId, true, 'watch');
+    }
+    this.sendCurrentQuestion(client!, existingSession);
+    client?.emit('joinedInProgress', { mode: existingSession.isWatching ? 'watch' : 'play' });
+    return;
+  }
+
+  // Determine mode: player if first question not expired, otherwise watcher
+  const isFirstQuestionActive = this.globalQuiz.currentQuestionIndex === 0 && this.globalQuiz.timeLeft > 0;
+  const isWatching = !isFirstQuestionActive || this.shouldBeInWatchMode(clientId);
+
+  const session: QuizSession = {
+    questions: this.globalQuiz.questions,
+    currentIndex: this.globalQuiz.currentQuestionIndex,
+    score: 0,
+    answers: [],
+    isWatching,
+    timeLimit: this.globalQuiz.timeLimit,
+    timeLeft: this.globalQuiz.timeLeft,
+    joinedAt: this.globalQuiz.currentQuestionIndex,
+  };
+
+  this.quizSessions.set(clientId, session);
+  this.globalQuiz.participants.set(clientId, { clientId, score: 0, answers: [] } as QuizParticipant);
+  
+  // CRITICAL FIX: Update user participation with correct mode
+  this.updateUserParticipation(clientId, true, isWatching ? 'watch' : 'play');
+
+  this.sendCurrentQuestion(client!, session);
+  client?.emit('joinedInProgress', { mode: isWatching ? 'watch' : 'play' });
+  this.broadcastPlayerStats();
+  this.broadcastUserStats(); // Make sure to broadcast updated user stats
+}
+
+// Add this helper method to determine if user should be in watch mode
+private shouldBeInWatchMode(clientId: string): boolean {
+  if (!this.globalQuiz) return true;
+  
+  const participant = this.globalQuiz.participants.get(clientId);
+  // If user has already answered incorrectly in this quiz, they should be watching
+  if (participant && participant.answers.length > 0) {
+    const lastAnswer = participant.answers[participant.answers.length - 1];
+    if (!lastAnswer.correct && lastAnswer.questionId === this.globalQuiz.questions[this.globalQuiz.currentQuestionIndex]?.id) {
+      return true;
+    }
+  }
+  
+  // If it's not the first question or time has expired, user should watch
+  return this.globalQuiz.currentQuestionIndex > 0 || this.globalQuiz.timeLeft <= 0;
+}
+
+
 
   private broadcastLobbyUpdate() {
     if (!this.currentLobby) return;
