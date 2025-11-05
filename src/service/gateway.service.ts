@@ -42,11 +42,17 @@ export class GatewayService {
     private readonly eventService: EventService,
     private readonly usersService: UsersService,
   ) {
+    // Enregistrer le service globalement pour les hooks MongoDB
+    global.gatewayService = this;
+    
     this.initializeNextEvent();
     this.startEventScheduler();
     setTimeout(() => this.checkAndOpenLobbyIfNeeded(), 1000);
     setInterval(() => this.debugEventStatus(), 30000);
     setInterval(() => this.emergencyLobbyCheck(), 60000);
+    
+    // Vérification périodique des événements expirés
+    setInterval(() => this.cleanupExpiredEvents(), 30000);
   }
 
   setServer(server: Server) {
@@ -54,44 +60,93 @@ export class GatewayService {
   }
 
   async handleEventUpdated(updatedEvent: Event) {
-    // Always broadcast the updated next-event info
-    this.broadcastNextEvent(updatedEvent);
-
-    // If there is an open lobby for this event, update it in place
-    if (this.currentLobby && this.currentLobby.event.id === updatedEvent.id) {
-      // Update event details in the current lobby
-      this.currentLobby.event = updatedEvent;
-
-      // Restart countdown with the new startDate
-      if (this.currentLobby.countdownTimer) {
-        clearInterval(this.currentLobby.countdownTimer);
-        this.currentLobby.countdownTimer = undefined;
-      }
-      this.startEventCountdown();
-
-      // Re-send lobby info so clients refresh details
-      this.server.emit('lobbyOpened', {
-        event: {
-          id: updatedEvent.id,
-          theme: updatedEvent.theme || 'Questions Aléatoires',
-          numberOfQuestions: updatedEvent.numberOfQuestions,
-          startDate: updatedEvent.startDate,
-          minPlayers: updatedEvent.minPlayers,
-        },
-      });
-
-      // Send immediate countdown snapshot
-      const now = new Date().getTime();
-      const eventTime = new Date(updatedEvent.startDate).getTime();
-      const timeLeft = Math.max(0, Math.floor((eventTime - now) / 1000));
-      this.server.emit('eventCountdown', {
-        timeLeft,
-        participants: this.currentLobby.participants.size,
-        minPlayers: updatedEvent.minPlayers,
-      });
+    console.log(`🔄 Événement modifié détecté: ${updatedEvent.theme}`);
+    
+    const now = new Date().getTime();
+    const eventTime = new Date(updatedEvent.startDate).getTime();
+    const maxWindow = eventTime + 2 * 60 * 1000;
+    
+    if (now > maxWindow && !updatedEvent.isCompleted) {
+      console.log(`⚠️ Événement ${updatedEvent.theme} expiré - suppression automatique`);
+      await this.eventService.updateEvent(updatedEvent.id, { isCompleted: true });
+      this.server.emit('eventExpired', { id: updatedEvent.id, theme: updatedEvent.theme });
+      return;
     }
 
-    // Also emit a generic update event for any client-side custom handlers
+    this.broadcastNextEvent(updatedEvent);
+
+    // 🔥 LOGIQUE PRINCIPALE: Détruire complètement l'ancien lobby et créer le nouveau
+    if (this.currentLobby && this.currentLobby.event.id === updatedEvent.id) {
+      console.log(`🔄 REMPLACEMENT du lobby existant`);
+      
+      // Sauvegarder les participants avant destruction
+      const currentParticipants = new Set(this.currentLobby.participants);
+      
+      // DÉTRUIRE COMPLÈTEMENT l'ancien lobby
+      this.destroyCurrentLobby('Événement modifié - recréation du lobby');
+      
+      // Vérifier si on peut créer le nouveau lobby
+      const newEventTime = new Date(updatedEvent.startDate).getTime();
+      const newLobbyTime = newEventTime - 5 * 60 * 1000;
+      const newEndTime = newEventTime + 2 * 60 * 1000;
+      
+      if (now >= newLobbyTime && now <= newEndTime) {
+        // CRÉER un nouveau lobby complètement neuf
+        this.currentLobby = {
+          event: updatedEvent,
+          participants: currentParticipants,
+          countdownTimer: undefined,
+          lobbyTimer: undefined,
+        };
+        
+        if (!updatedEvent.lobbyOpen) {
+          await this.eventService.openLobby(updatedEvent.id);
+        }
+        
+        this.startEventCountdown();
+        
+        // FORCER la mise à jour immédiate côté client
+        this.server.emit('lobbyOpened', {
+          event: {
+            id: updatedEvent.id,
+            theme: updatedEvent.theme || 'Questions Aléatoires',
+            numberOfQuestions: updatedEvent.numberOfQuestions,
+            startDate: updatedEvent.startDate,
+            minPlayers: updatedEvent.minPlayers,
+          },
+          isRecreated: true
+        });
+        
+        // Envoyer immédiatement le statut lobby
+        this.server.emit('lobbyStatus', {
+          isOpen: true,
+          event: updatedEvent
+        });
+        
+        // Envoyer le countdown immédiat
+        const timeLeft = Math.max(0, Math.floor((newEventTime - now) / 1000));
+        this.server.emit('eventCountdown', {
+          timeLeft,
+          participants: currentParticipants.size,
+          minPlayers: updatedEvent.minPlayers,
+        });
+        
+        console.log(`✅ NOUVEAU lobby créé avec ${currentParticipants.size} participants`);
+      } else {
+        console.log(`❌ Nouveau timing invalide - lobby détruit sans recréation`);
+      }
+    } else if (!this.currentLobby && !this.isGlobalQuizActive()) {
+      // Aucun lobby ouvert, vérifier si on doit en ouvrir un avec les nouvelles données
+      const newEventTime = new Date(updatedEvent.startDate).getTime();
+      const newLobbyTime = newEventTime - 5 * 60 * 1000;
+      const newEndTime = newEventTime + 2 * 60 * 1000;
+      
+      if (now >= newLobbyTime && now <= newEndTime) {
+        console.log(`🚀 Ouverture d'un nouveau lobby suite à la modification`);
+        await this.openEventLobby(updatedEvent);
+      }
+    }
+
     this.server.emit('eventUpdated', {
       id: updatedEvent.id,
       theme: updatedEvent.theme,
@@ -99,6 +154,17 @@ export class GatewayService {
       numberOfQuestions: updatedEvent.numberOfQuestions,
       minPlayers: updatedEvent.minPlayers,
     });
+  }
+
+  async handleEventDeleted(eventId: string) {
+    console.log(`🗑️ Événement supprimé détecté: ${eventId}`);
+    
+    // Détruire le lobby si c'est l'événement actuel
+    if (this.currentLobby && this.currentLobby.event.id === eventId) {
+      this.destroyCurrentLobby('Événement supprimé');
+    }
+    
+    this.server.emit('eventDeleted', { id: eventId });
   }
 
   // --- Méthodes utilitaires ---
@@ -1079,6 +1145,50 @@ private shouldBeInWatchMode(clientId: string): boolean {
     await this.emergencyLobbyCheck();
   }
 
+  private destroyCurrentLobby(reason: string = 'Lobby détruit') {
+    if (!this.currentLobby) return;
+    
+    console.log(`💥 DESTRUCTION COMPLÈTE DU LOBBY: ${reason}`);
+    
+    const eventId = this.currentLobby.event.id;
+    
+    // Nettoyer tous les timers
+    if (this.currentLobby.countdownTimer) {
+      clearInterval(this.currentLobby.countdownTimer);
+      this.currentLobby.countdownTimer = undefined;
+    }
+    if (this.currentLobby.lobbyTimer) {
+      clearTimeout(this.currentLobby.lobbyTimer);
+      this.currentLobby.lobbyTimer = undefined;
+    }
+    
+    // Détruire complètement l'objet AVANT notification
+    this.currentLobby = null;
+    
+    // FORCER les notifications de fermeture
+    this.server.emit('lobbyClosed', { reason, eventId });
+    this.server.emit('lobbyStatus', { isOpen: false, event: null });
+    
+    console.log(`✅ Lobby complètement détruit`);
+  }
+
+  async forceEventUpdate(eventId: string) {
+    console.log(`🔄 MISE À JOUR FORCÉE DE L'ÉVÉNEMENT: ${eventId}`);
+    
+    // FORCER la destruction du lobby actuel s'il correspond à cet événement
+    if (this.currentLobby && this.currentLobby.event.id === eventId) {
+      this.destroyCurrentLobby('Mise à jour forcée de l\'événement');
+    }
+    
+    // Récupérer et traiter l'événement mis à jour
+    const events = await this.eventService.findActiveEvents();
+    const updatedEvent = events.find(e => e.id === eventId);
+    
+    if (updatedEvent) {
+      await this.handleEventUpdated(updatedEvent);
+    }
+  }
+
   // Nouvelle méthode pour gérer la pause publicitaire avant la dernière question
   private startAdBreakBeforeFinalQuestion() {
     if (!this.globalQuiz) return;
@@ -1188,5 +1298,24 @@ private shouldBeInWatchMode(clientId: string): boolean {
     this.globalQuiz = null;
     this.quizSessions.clear();
     this.currentLobby = null;
+  }
+
+  private async cleanupExpiredEvents() {
+    try {
+      const now = new Date().getTime();
+      const activeEvents = await this.eventService.findActiveEvents();
+      
+      for (const event of activeEvents) {
+        const eventTime = new Date(event.startDate).getTime();
+        const maxWindow = eventTime + 2 * 60 * 1000; // 2 min après
+        
+        if (now > maxWindow && !event.isCompleted) {
+          console.log(`🧹 Nettoyage automatique: ${event.theme}`);
+          await this.eventService.updateEvent(event.id, { isCompleted: true });
+        }
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors du nettoyage:', error);
+    }
   }
 }
