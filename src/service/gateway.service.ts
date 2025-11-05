@@ -235,6 +235,19 @@ handleDisconnection(clientId: string) {
       return;
     }
 
+    // Vérifier si c'est la dernière question
+    const isFinalQuestion = this.globalQuiz && this.globalQuiz.currentQuestionIndex === this.globalQuiz.questions.length - 1;
+    
+    if (isFinalQuestion) {
+      // Pour la dernière question, vérifier immédiatement si la réponse est correcte
+      const isCorrect = currentQuestion.correctResponse === payload.answer;
+      if (isCorrect) {
+        // Première réponse correcte sur la dernière question - fermer l'événement immédiatement
+        this.handleFinalQuestionCorrectAnswer(clientId, payload);
+        return;
+      }
+    }
+
     session.pendingAnswer = { questionId: payload.questionId, answer: payload.answer };
     client?.emit('answerQueued', { questionId: payload.questionId, answer: payload.answer, timeLeft: session.timeLeft });
     this.broadcastPlayerStats();
@@ -360,8 +373,16 @@ handleDisconnection(clientId: string) {
   if (this.globalQuiz.currentQuestionIndex >= this.globalQuiz.questions.length) {
     this.completeGlobalQuiz();
   } else {
-    this.globalQuiz.timeLeft = this.globalQuiz.timeLimit;
-    this.startGlobalQuiz();
+    // Vérifier si c'est l'avant-dernière question (donc la prochaine sera la dernière)
+    const isNextQuestionFinal = this.globalQuiz.currentQuestionIndex === this.globalQuiz.questions.length - 1;
+    
+    if (isNextQuestionFinal) {
+      // Afficher la publicité pendant 15s avant la dernière question
+      this.startAdBreakBeforeFinalQuestion();
+    } else {
+      this.globalQuiz.timeLeft = this.globalQuiz.timeLimit;
+      this.startGlobalQuiz();
+    }
   }
   
   // BROADCAST UPDATED USER STATS AFTER MODE CHANGES
@@ -1056,5 +1077,116 @@ private shouldBeInWatchMode(clientId: string): boolean {
     console.log('🔄 VÉRIFICATION FORCÉE DEMANDÉE');
     await this.checkAndOpenLobbyIfNeeded();
     await this.emergencyLobbyCheck();
+  }
+
+  // Nouvelle méthode pour gérer la pause publicitaire avant la dernière question
+  private startAdBreakBeforeFinalQuestion() {
+    if (!this.globalQuiz) return;
+
+    console.log('📺 Démarrage de la pause publicitaire avant la dernière question');
+    
+    // Envoyer l'événement de pause publicitaire à tous les clients
+    this.server.emit('adBreakStarted', {
+      duration: 15, // 15 secondes
+      message: 'Pause publicitaire avant la dernière question',
+      isFinalQuestion: true
+    });
+
+    // Démarrer le compte à rebours de 15 secondes
+    let countdown = 15;
+    const adCountdownInterval = setInterval(() => {
+      countdown--;
+      this.server.emit('adBreakCountdown', { timeLeft: countdown });
+      
+      if (countdown <= 0) {
+        clearInterval(adCountdownInterval);
+        this.server.emit('adBreakEnded');
+        
+        // Démarrer la dernière question après la publicité
+        this.globalQuiz!.timeLeft = this.globalQuiz!.timeLimit;
+        this.startGlobalQuiz();
+      }
+    }, 1000);
+  }
+
+  // Nouvelle méthode pour gérer la première réponse correcte sur la dernière question
+  private async handleFinalQuestionCorrectAnswer(clientId: string, payload: SubmitAnswerPayload) {
+    if (!this.globalQuiz) return;
+
+    console.log(`🏆 Première réponse correcte sur la dernière question par ${clientId}`);
+    
+    // Arrêter tous les timers
+    if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
+    if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
+
+    const session = this.quizSessions.get(clientId);
+    if (session) {
+      const currentQuestion = session.questions[session.currentIndex];
+      
+      // Marquer la réponse comme correcte
+      session.score++;
+      const participant = this.globalQuiz.participants?.get(clientId);
+      if (participant) {
+        participant.score = session.score;
+        participant.finishedAt = new Date();
+        participant.lastCorrectAnswerTime = Date.now();
+        
+        const answerData = {
+          questionId: currentQuestion.id,
+          userAnswer: payload.answer,
+          correct: true,
+          submittedAt: Date.now(),
+        };
+        
+        session.answers.push(answerData);
+        participant.answers.push(answerData);
+      }
+    }
+
+    // Obtenir les informations du gagnant
+    const winnerInfo = await this.getWinnerInfo(clientId);
+    const winnerUsername = winnerInfo.username || null;
+    const winnerPhone = winnerInfo.phoneNumber || null;
+    
+    // Fermer l'événement immédiatement
+    if (this.globalQuiz.event) {
+      if (winnerPhone) {
+        await this.eventService.completeEvent(this.globalQuiz.event.id, winnerPhone);
+      } else {
+        await this.eventService.completeEvent(this.globalQuiz.event.id, clientId);
+      }
+
+      // Envoyer l'événement de victoire immédiate
+      this.server.emit('immediateWinner', {
+        eventId: this.globalQuiz.event.id,
+        winner: winnerUsername || clientId,
+        winnerPhone,
+        winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${clientId}`,
+        message: 'Première réponse correcte sur la dernière question !'
+      });
+    }
+
+    // Compléter le quiz pour tous les participants
+    this.quizSessions.forEach((session, sessionClientId) => {
+      const client = this.server.sockets.sockets.get(sessionClientId);
+      if (client) {
+        client.emit('quizCompleted', {
+          score: session.score,
+          totalQuestions: session.questions.length,
+          answers: session.answers,
+          joinedAt: session.joinedAt,
+          winner: winnerUsername || clientId,
+          isWinner: sessionClientId === clientId,
+          immediateWin: true
+        });
+      }
+    });
+
+    // Nettoyer après 5 secondes
+    setTimeout(() => this.server.disconnectSockets(true), 5000);
+
+    this.globalQuiz = null;
+    this.quizSessions.clear();
+    this.currentLobby = null;
   }
 }
