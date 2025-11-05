@@ -29,3 +29,22 @@ export class Event extends Document {
 }
 
 export const EventSchema = SchemaFactory.createForClass(Event);
+
+// Hook pour détecter les changements automatiquement
+EventSchema.post('findOneAndUpdate', function(doc) {
+  if (doc && global.gatewayService) {
+    global.gatewayService.handleEventUpdated(doc);
+  }
+});
+
+EventSchema.post('save', function(doc) {
+  if (doc && global.gatewayService) {
+    global.gatewayService.handleEventUpdated(doc);
+  }
+});
+
+EventSchema.post('findOneAndDelete', function(doc) {
+  if (doc && global.gatewayService) {
+    global.gatewayService.handleEventDeleted(doc.id);
+  }
+});
