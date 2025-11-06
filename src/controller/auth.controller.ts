@@ -35,7 +35,7 @@ export class AuthController {
    */
   @Post('verify-otp')
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto, @Res({ passthrough: true }) res: Response) {
-    // 🔹 Vérification OTP
+    // Vérification OTP
     const isValid = await this.authService.verifyOtp(
       verifyOtpDto.phoneNumber,
       verifyOtpDto.otp,
@@ -44,13 +44,13 @@ export class AuthController {
       throw new BadRequestException('Invalid or expired OTP');
     }
 
-    // 🔹 Création / récupération du user
+    // Création / récupération du user
     const player = await this.authService.register({
       phoneNumber: verifyOtpDto.phoneNumber,
       username: verifyOtpDto.username ?? `user_${Date.now()}`,
     });
 
-    // 🔹 Payload du token
+    // Payload du token
     const payload = {
       sub: String(player.user._id),
       phoneNumber: player.user.phoneNumber,
@@ -58,23 +58,23 @@ export class AuthController {
       role: 'user',
     };
 
-    // 🔹 Génération des tokens
+    // Génération des tokens
     const accessToken = this.jwtService.sign(payload, { expiresIn: '60s' }); // 1 minute pour test
     const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' }); // 7 jours
 
-    // 🔹 Sauvegarde du refreshToken (haché en mémoire ou BDD)
+    // Sauvegarde du refreshToken (haché en mémoire ou BDD)
     await this.authService.saveRefreshToken(player.user._id, refreshToken);
 
-    // 🍪 Envoi du refresh token dans un cookie sécurisé
+    // Envoi du refresh token dans un cookie sécurisé
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // ⚠️ true seulement en HTTPS
+      secure: process.env.NODE_ENV === 'production', // true seulement en HTTPS
       sameSite: 'strict',
-      path: '/', // 🔹 pas besoin de limiter à /auth/refresh, sinon il ne sera pas envoyé ailleurs
+      path: '/', //  pas besoin de limiter à /auth/refresh, sinon il ne sera pas envoyé ailleurs
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
     });
 
-    // ✅ Retourne seulement le token d'accès
+    // Retourne seulement le token d'accès
     return res.json({
       success: true,
       player: {
@@ -101,18 +101,18 @@ export class AuthController {
     }
 
     try {
-      // 🔹 Vérifier le refresh token JWT
+      // Vérifier le refresh token JWT
       const decoded = this.jwtService.verify(refreshToken, {
         secret: process.env.JWT_SECRET || '123456',
       });
 
-      // 🔹 Vérifier qu’il correspond bien à celui enregistré pour cet utilisateur
+      // Vérifier qu’il correspond bien à celui enregistré pour cet utilisateur
       const isValid = await this.authService.validateRefreshToken(decoded.sub, refreshToken);
       if (!isValid) {
         throw new UnauthorizedException('Invalid refresh token');
       }
 
-      // 🔹 Générer un nouveau accessToken
+      // Générer un nouveau accessToken
       const newAccessToken = this.jwtService.sign(
         {
           sub: decoded.sub,
@@ -123,7 +123,7 @@ export class AuthController {
         { expiresIn: '60s' },
       );
 
-      // 🔹 Optionnel : Regénérer un nouveau refresh token (rotation)
+      // Optionnel : Regénérer un nouveau refresh token (rotation)
       const newRefreshToken = this.jwtService.sign(
         {
           sub: decoded.sub,
@@ -136,7 +136,7 @@ export class AuthController {
 
       await this.authService.saveRefreshToken(decoded.sub, newRefreshToken);
 
-      // 🔹 Met à jour le cookie
+      // Met à jour le cookie
       res.cookie('refresh_token', newRefreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
