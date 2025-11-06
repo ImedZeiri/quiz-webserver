@@ -65,10 +65,28 @@ export class EventController {
     if (updates.startDate) {
       normalized.startDate = new Date(updates.startDate as any);
     }
-    const updated = await this.eventService.updateEvent(id, normalized);
-    if (updated) {
-      await this.gatewayService.handleEventUpdated(updated);
+    
+    console.log(`📝 Mise à jour de l'événement ${id} avec:`, normalized);
+    
+    // Les hooks MongoDB se chargeront automatiquement de la notification
+    const result = await this.eventService.updateEvent(id, normalized);
+    
+    // Force une vérification immédiate pour s'assurer que le lobby est mis à jour
+    if (result) {
+      setTimeout(() => {
+        this.gatewayService.forceEventUpdate(id);
+      }, 100);
     }
-    return updated;
+    
+    return result;
+  }
+
+  @Post(':id/force-update')
+  async forceEventUpdate(@Param('id') id: string): Promise<{ message: string; timestamp: string }> {
+    await this.gatewayService.forceEventUpdate(id);
+    return {
+      message: 'Mise à jour forcée de l\'événement effectuée',
+      timestamp: new Date().toISOString()
+    };
   }
 }
