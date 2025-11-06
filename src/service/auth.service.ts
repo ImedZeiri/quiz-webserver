@@ -5,6 +5,10 @@ import { RegisterDto } from '../dto/register.dto';
 import * as crypto from 'crypto';
 import { parsePhoneNumberWithError } from 'libphonenumber-js';
 import axios from 'axios';
+import * as bcrypt from 'bcrypt';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User } from 'src/model/user.entity';
 
 @Injectable()
 export class AuthService {
@@ -13,7 +17,10 @@ export class AuthService {
     'LUJcxP5QOgROqZKt8ktFxan6eqcj0u2750HLM8lHrgEo2f4GjcZih5U3FOdR';
   private readonly WIN_SMS_SENDER = 'QUIZTN';
   private readonly WIN_SMS_API_URL = 'https://www.winsmspro.com/sms/sms/api';
+  private readonly refreshTokens = new Map<string, string>(); // idUser -> hashed token
+
   constructor(
+    @InjectModel(User.name) private readonly userModel: Model<User>,
     private usersService: UsersService,
     private jwtService: JwtService,
   ) {}
@@ -135,5 +142,33 @@ export class AuthService {
     console.log('OTP verified successfully for:', formattedPhone);
     this.otpStore.delete(formattedPhone);
     return true;
+  }
+
+  /**
+   * Sauvegarde le refresh token haché en base
+   */
+  async saveRefreshToken(userId: string, token: string): Promise<void> {
+    const hashed = await bcrypt.hash(token, 10);
+    console.log('💾 Saving refresh token for userId:', userId);
+    await this.userModel.findByIdAndUpdate(userId, { refreshToken: hashed });
+  }
+
+  /**
+   * Valide un refresh token par rapport à celui stocké dans la base
+   */
+  async validateRefreshToken(userId: string, token: string): Promise<boolean> {
+    const user = await this.userModel.findById(userId);
+    if (!user || !user.refreshToken) return false;
+
+    console.log('🔍 Validating refresh token for userId:', userId);
+    return bcrypt.compare(token, user.refreshToken);
+  }
+
+  /**
+   * Supprime le refresh token de la base (ex: logout)
+   */
+  async removeRefreshToken(userId: string): Promise<void> {
+    console.log('🗑 Removing refresh token for userId:', userId);
+    await this.userModel.findByIdAndUpdate(userId, { refreshToken: null });
   }
 }

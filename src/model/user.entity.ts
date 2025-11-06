@@ -14,6 +14,9 @@ export class User extends Document {
 
   @Prop({ default: 0 })
   score: number;
+
+  @Prop({ default: null })
+  refreshToken?: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
