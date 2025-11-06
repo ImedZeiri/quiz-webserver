@@ -152,29 +152,3 @@ export class AuthController {
     }
   }
 }
-
-  /**
-   * ✅ Étape 4 : Logout — supprime le cookie
-   */
-  @Post('logout')
-  async logout(@Req() req: Request, @Res() res: Response) {
-    const refreshToken = req.cookies?.refresh_token;
-    if (refreshToken) {
-      try {
-        const decoded: any = this.jwtService.decode(refreshToken);
-        if (decoded?.sub) {
-          await this.authService.removeRefreshToken(decoded.sub);
-        }
-      } catch {}
-    }
-
-    res.clearCookie('refresh_token', {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'strict',
-      path: '/auth/refresh',
-    });
-
-    return res.json({ success: true, message: 'Logged out successfully' });
-  }
-}
