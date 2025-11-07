@@ -73,6 +73,13 @@ export class AuthController {
       path: '/', //  pas besoin de limiter à /auth/refresh, sinon il ne sera pas envoyé ailleurs
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
     });
+    // res.cookie('refresh_token', refreshToken, {
+    //   httpOnly: true,
+    //   secure: false, // ⚠️ mettre false en local sinon Chrome le bloque
+    //   sameSite: 'lax', // 'lax' = bon équilibre pour les tests
+    //   path: '/', // pour qu’il soit envoyé sur /auth/refresh
+    //   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
+    // });
 
     // Retourne seulement le token d'accès
     return res.json({
@@ -90,7 +97,7 @@ export class AuthController {
   /**
    * ✅ Étape 3 : Refresh via cookie
    */
- /**
+  /**
    * ✅ Étape 2 : Rafraîchir l'access token via le cookie
    */
   @Post('refresh')
@@ -144,6 +151,14 @@ export class AuthController {
         path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
+
+      // res.cookie('refresh_token', newRefreshToken, {
+      //   httpOnly: true,
+      //   secure: false, // ⚠️ pour local (mettre true en prod HTTPS)
+      //   sameSite: 'lax', // pour les tests, éviter 'strict'
+      //   path: '/',
+      //   maxAge: 7 * 24 * 60 * 60 * 1000,
+      // });
 
       return res.json({ accessToken: newAccessToken });
     } catch (error) {
