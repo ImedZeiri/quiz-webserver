@@ -358,6 +358,28 @@ handleDisconnection(clientId: string) {
 
   private sendCurrentQuestion(client: Socket, session: QuizSession) {
     const currentQuestion = session.questions[session.currentIndex];
+    
+    // Construire previousAnswer avec les informations de feedback
+    let previousAnswer = null;
+    if (session.answers.length > 0) {
+      const lastAnswer = session.answers[session.answers.length - 1];
+      const previousQuestionIndex = session.currentIndex - 1;
+      
+      if (previousQuestionIndex >= 0) {
+        const previousQuestion = session.questions[previousQuestionIndex];
+        const correctAnswer = previousQuestion.correctResponse;
+        const correctResponseText = this.getResponseText(previousQuestion, correctAnswer);
+        
+        previousAnswer = {
+          ...lastAnswer,
+          correctAnswer: correctAnswer,
+          correctResponseText: correctResponseText
+        };
+      } else {
+        previousAnswer = lastAnswer;
+      }
+    }
+    
     client.emit('quizQuestion', {
       question: {
         id: currentQuestion.id,
@@ -370,11 +392,22 @@ handleDisconnection(clientId: string) {
       },
       questionNumber: session.currentIndex + 1,
       totalQuestions: session.questions.length,
-      previousAnswer: session.answers.length > 0 ? session.answers[session.answers.length - 1] : null,
+      previousAnswer: previousAnswer,
       isWatching: session.isWatching,
       timeLeft: session.timeLeft,
       ...this.getPlayerStats(),
     });
+  }
+  
+  // Méthode utilitaire pour récupérer le texte de la réponse
+  private getResponseText(question: any, responseIndex: number): string {
+    switch (responseIndex) {
+      case 1: return question.response1 || '';
+      case 2: return question.response2 || '';
+      case 3: return question.response3 || '';
+      case 4: return question.response4 || '';
+      default: return '';
+    }
   }
 
  private handleGlobalTimeExpired() {
