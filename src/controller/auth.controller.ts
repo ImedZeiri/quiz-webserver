@@ -59,7 +59,7 @@ export class AuthController {
     };
 
     // Génération des tokens
-    const accessToken = this.jwtService.sign(payload, { expiresIn: '60s' }); // 1 minute pour test
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '4h' }); // 1 minute pour test
     const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' }); // 7 jours
 
     // Sauvegarde du refreshToken (haché en mémoire ou BDD)
@@ -127,7 +127,7 @@ export class AuthController {
           phoneNumber: decoded.phoneNumber,
           role: decoded.role,
         },
-        { expiresIn: '60s' },
+        { expiresIn: '4h' },
       );
 
       // Optionnel : Regénérer un nouveau refresh token (rotation)
