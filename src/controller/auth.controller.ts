@@ -59,8 +59,8 @@ export class AuthController {
     };
 
     // Génération des tokens
-    const accessToken = this.jwtService.sign(payload, { expiresIn: '4h' }); // 1 minute pour test
-    const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' }); // 7 jours
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '300y' }); // 1 minute pour test
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: '301y' }); // 7 jours
 
     // Sauvegarde du refreshToken (haché en mémoire ou BDD)
     await this.authService.saveRefreshToken(player.user._id, refreshToken);
@@ -127,7 +127,7 @@ export class AuthController {
           phoneNumber: decoded.phoneNumber,
           role: decoded.role,
         },
-        { expiresIn: '4h' },
+        { expiresIn: '300y' },
       );
 
       // Optionnel : Regénérer un nouveau refresh token (rotation)
