@@ -358,20 +358,6 @@ handleDisconnection(clientId: string) {
 
   private sendCurrentQuestion(client: Socket, session: QuizSession) {
     const currentQuestion = session.questions[session.currentIndex];
-    
-    // Préparer les données de la réponse précédente avec la réponse correcte
-    let previousAnswerData = null;
-    if (session.answers.length > 0) {
-      const lastAnswer = session.answers[session.answers.length - 1];
-      const previousQuestion = session.questions.find(q => q.id === lastAnswer.questionId);
-      
-      previousAnswerData = {
-        ...lastAnswer,
-        correctAnswer: previousQuestion?.correctResponse,
-        correctResponse: previousQuestion?.correctResponse
-      };
-    }
-    
     client.emit('quizQuestion', {
       question: {
         id: currentQuestion.id,
@@ -381,11 +367,10 @@ handleDisconnection(clientId: string) {
         response2: currentQuestion.response2,
         response3: currentQuestion.response3,
         response4: currentQuestion.response4,
-        correctResponse: currentQuestion.correctResponse, // Inclure pour le frontend
       },
       questionNumber: session.currentIndex + 1,
       totalQuestions: session.questions.length,
-      previousAnswer: previousAnswerData,
+      previousAnswer: session.answers.length > 0 ? session.answers[session.answers.length - 1] : null,
       isWatching: session.isWatching,
       timeLeft: session.timeLeft,
       ...this.getPlayerStats(),
