@@ -360,7 +360,7 @@ handleDisconnection(clientId: string) {
     const currentQuestion = session.questions[session.currentIndex];
     
     // Construire previousAnswer avec les informations de feedback
-    let previousAnswer = null;
+    let previousAnswer: any = null;
     if (session.answers.length > 0) {
       const lastAnswer = session.answers[session.answers.length - 1];
       const previousQuestionIndex = session.currentIndex - 1;
