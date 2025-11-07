@@ -2,16 +2,18 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   try {
     const app = await NestFactory.create<NestExpressApplication>(AppModule);
+    app.use(cookieParser());
     app.enableCors({
       origin: [
-        'http://localhost:4200', 
+        'http://localhost:4200',
         'http://127.0.0.1:4200',
-        'https://www.quiztn.com', 
-        'https://quiztn.com'
+        'https://www.quiztn.com',
+        'https://quiztn.com',
       ],
       methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
       credentials: true,
