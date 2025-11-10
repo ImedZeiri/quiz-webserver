@@ -59,8 +59,8 @@ export class AuthController {
     };
 
     // Génération des tokens
-    const accessToken = this.jwtService.sign(payload, { expiresIn: '60s' }); // 1 minute pour test
-    const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' }); // 7 jours
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '300y' }); // 1 minute pour test
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: '301y' }); // 7 jours
 
     // Sauvegarde du refreshToken (haché en mémoire ou BDD)
     await this.authService.saveRefreshToken(player.user._id, refreshToken);
@@ -68,8 +68,8 @@ export class AuthController {
     // Envoi du refresh token dans un cookie sécurisé
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // true seulement en HTTPS
-      sameSite: 'strict',
+      secure: true, // true seulement en HTTPS
+      sameSite: 'none',
       path: '/', //  pas besoin de limiter à /auth/refresh, sinon il ne sera pas envoyé ailleurs
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
     });
@@ -127,7 +127,7 @@ export class AuthController {
           phoneNumber: decoded.phoneNumber,
           role: decoded.role,
         },
-        { expiresIn: '60s' },
+        { expiresIn: '300y' },
       );
 
       // Optionnel : Regénérer un nouveau refresh token (rotation)
@@ -146,8 +146,8 @@ export class AuthController {
       // Met à jour le cookie
       res.cookie('refresh_token', newRefreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+        secure: true,
+        sameSite: 'none',
         path: '/',
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
