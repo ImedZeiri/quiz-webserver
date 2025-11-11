@@ -12,7 +12,7 @@ import type {
   QuizParticipant,
   StartQuizPayload,
   SubmitAnswerPayload,
-  PlayerStats
+  PlayerStats,
 } from '../types';
 
 interface UserSession {
@@ -35,8 +35,9 @@ export class GatewayService {
   private server: Server;
   private currentLobby: EventLobby | null = null;
   private nextEventTimer?: NodeJS.Timeout;
+  private userToClientMap = new Map<string, string>();
   private userSessions = new Map<string, UserSession>();
-  
+
   private statsUpdateInterval?: NodeJS.Timeout;
   private statsPendingBroadcast = false;
 
@@ -46,14 +47,14 @@ export class GatewayService {
     private readonly usersService: UsersService,
   ) {
     global.gatewayService = this;
-    
+
     this.initializeNextEvent();
     this.startEventScheduler();
     setTimeout(() => this.checkAndOpenLobbyIfNeeded(), 1000);
     setInterval(() => this.debugEventStatus(), 30000);
     setInterval(() => this.emergencyLobbyCheck(), 60000);
     setInterval(() => this.cleanupExpiredEvents(), 30000);
-    
+
     this.startStatsScheduler();
   }
 
@@ -67,7 +68,7 @@ export class GatewayService {
         this.broadcastUserStats();
         this.statsPendingBroadcast = false;
       }
-    }, 5000); 
+    }, 5000);
   }
 
   private scheduleStatsBroadcast() {
@@ -76,15 +77,22 @@ export class GatewayService {
 
   async handleEventUpdated(updatedEvent: Event) {
     console.log(`🔄 Événement modifié détecté: ${updatedEvent.theme}`);
-    
+
     const now = new Date().getTime();
     const eventTime = new Date(updatedEvent.startDate).getTime();
     const maxWindow = eventTime + 2 * 60 * 1000;
-    
+
     if (now > maxWindow && !updatedEvent.isCompleted) {
-      console.log(`⚠️ Événement ${updatedEvent.theme} expiré - suppression automatique`);
-      await this.eventService.updateEvent(updatedEvent.id, { isCompleted: true });
-      this.server.emit('eventExpired', { id: updatedEvent.id, theme: updatedEvent.theme });
+      console.log(
+        `⚠️ Événement ${updatedEvent.theme} expiré - suppression automatique`,
+      );
+      await this.eventService.updateEvent(updatedEvent.id, {
+        isCompleted: true,
+      });
+      this.server.emit('eventExpired', {
+        id: updatedEvent.id,
+        theme: updatedEvent.theme,
+      });
       return;
     }
 
@@ -92,14 +100,14 @@ export class GatewayService {
 
     if (this.currentLobby && this.currentLobby.event.id === updatedEvent.id) {
       console.log(`🔄 REMPLACEMENT du lobby existant`);
-      
+
       const currentParticipants = new Set(this.currentLobby.participants);
       this.destroyCurrentLobby('Événement modifié - recréation du lobby');
-      
+
       const newEventTime = new Date(updatedEvent.startDate).getTime();
       const newLobbyTime = newEventTime - 5 * 60 * 1000;
       const newEndTime = newEventTime + 2 * 60 * 1000;
-      
+
       if (now >= newLobbyTime && now <= newEndTime) {
         this.currentLobby = {
           event: updatedEvent,
@@ -107,13 +115,13 @@ export class GatewayService {
           countdownTimer: undefined,
           lobbyTimer: undefined,
         };
-        
+
         if (!updatedEvent.lobbyOpen) {
           await this.eventService.openLobby(updatedEvent.id);
         }
-        
+
         this.startEventCountdown();
-        
+
         this.server.emit('lobbyOpened', {
           event: {
             id: updatedEvent.id,
@@ -122,30 +130,34 @@ export class GatewayService {
             startDate: updatedEvent.startDate,
             minPlayers: updatedEvent.minPlayers,
           },
-          isRecreated: true
+          isRecreated: true,
         });
-        
+
         this.server.emit('lobbyStatus', {
           isOpen: true,
-          event: updatedEvent
+          event: updatedEvent,
         });
-        
+
         const timeLeft = Math.max(0, Math.floor((newEventTime - now) / 1000));
         this.server.emit('eventCountdown', {
           timeLeft,
           participants: currentParticipants.size,
           minPlayers: updatedEvent.minPlayers,
         });
-        
-        console.log(`✅ NOUVEAU lobby créé avec ${currentParticipants.size} participants`);
+
+        console.log(
+          `✅ NOUVEAU lobby créé avec ${currentParticipants.size} participants`,
+        );
       } else {
-        console.log(`❌ Nouveau timing invalide - lobby détruit sans recréation`);
+        console.log(
+          `❌ Nouveau timing invalide - lobby détruit sans recréation`,
+        );
       }
     } else if (!this.currentLobby && !this.isGlobalQuizActive()) {
       const newEventTime = new Date(updatedEvent.startDate).getTime();
       const newLobbyTime = newEventTime - 5 * 60 * 1000;
       const newEndTime = newEventTime + 2 * 60 * 1000;
-      
+
       if (now >= newLobbyTime && now <= newEndTime) {
         console.log(`🚀 Ouverture d'un nouveau lobby suite à la modification`);
         await this.openEventLobby(updatedEvent);
@@ -163,11 +175,11 @@ export class GatewayService {
 
   async handleEventDeleted(eventId: string) {
     console.log(`🗑️ Événement supprimé détecté: ${eventId}`);
-    
+
     if (this.currentLobby && this.currentLobby.event.id === eventId) {
       this.destroyCurrentLobby('Événement supprimé');
     }
-    
+
     this.server.emit('eventDeleted', { id: eventId });
   }
 
@@ -175,29 +187,35 @@ export class GatewayService {
     return this.globalQuiz?.isActive === true;
   }
 
-  async getQuestionsByTheme(theme?: string, limit: number = 10): Promise<Question[]> {
+  async getQuestionsByTheme(
+    theme?: string,
+    limit: number = 10,
+  ): Promise<Question[]> {
     console.log(`getQuestionsByTheme - Thème: ${theme}, Limite: ${limit}`);
-    
+
     if (theme && theme.trim() !== '') {
       const themeQuestions = await this.questionService.findByTheme(theme);
-      console.log(`Questions trouvées pour le thème '${theme}': ${themeQuestions.length}`);
-      
+      console.log(
+        `Questions trouvées pour le thème '${theme}': ${themeQuestions.length}`,
+      );
+
       if (themeQuestions.length > 0) {
         const result = themeQuestions.slice(0, limit);
         console.log(`Questions retournées après slice: ${result.length}`);
         return result;
       }
     }
-    
+
     console.log(`Retour de questions aléatoires avec limite: ${limit}`);
-    const randomQuestions = await this.questionService.findRandomQuestions(limit);
+    const randomQuestions =
+      await this.questionService.findRandomQuestions(limit);
     console.log(`Questions aléatoires récupérées: ${randomQuestions.length}`);
     return randomQuestions;
   }
 
   handleConnection(clientId: string) {
     console.log(`Client connected: ${clientId}`);
-    
+
     this.userSessions.set(clientId, {
       socketId: clientId,
       token: '',
@@ -205,12 +223,12 @@ export class GatewayService {
       isParticipating: false,
       isAuthenticated: false,
       userType: 'guest',
-      connectedAt: new Date()
+      connectedAt: new Date(),
     });
-    
+
     this.checkAndOpenLobbyIfNeeded();
     this.sendNextEventInfo(clientId);
-    
+
     if (this.currentLobby) {
       this.sendLobbyInfo(clientId);
       this.sendEventCountdown(clientId);
@@ -221,9 +239,17 @@ export class GatewayService {
 
   handleDisconnection(clientId: string) {
     console.log(`Client disconnected: ${clientId}`);
-    
+
+    const userSession = this.userSessions.get(clientId);
+    if (userSession?.userId) {
+      const currentClientId = this.userToClientMap.get(userSession.userId);
+      if (currentClientId === clientId) {
+        this.userToClientMap.delete(userSession.userId);
+      }
+    }
+
     this.userSessions.delete(clientId);
-    
+
     const session = this.quizSessions.get(clientId);
     if (session?.timer) clearTimeout(session.timer);
     if (session?.timerInterval) clearInterval(session.timerInterval);
@@ -231,14 +257,16 @@ export class GatewayService {
     if (this.globalQuiz?.participants) {
       this.globalQuiz.participants.delete(clientId);
     }
-    
+
     if (this.currentLobby?.participants.has(clientId)) {
       this.currentLobby.participants.delete(clientId);
-      console.log(`Joueur ${clientId} retiré du lobby. Total: ${this.currentLobby.participants.size}`);
+      console.log(
+        `Joueur ${clientId} retiré du lobby. Total: ${this.currentLobby.participants.size}`,
+      );
       this.broadcastLobbyUpdate();
     }
     this.broadcastPlayerStats();
-    this.scheduleStatsBroadcast(); 
+    this.scheduleStatsBroadcast();
   }
 
   async startSoloQuiz(clientId: string, payload: { theme?: string }) {
@@ -248,11 +276,13 @@ export class GatewayService {
       const questions = await this.getQuestionsByTheme(theme, 10);
 
       if (questions.length === 0) {
-        client?.emit('error', { message: 'Aucune question trouvée pour ce thème' });
+        client?.emit('error', {
+          message: 'Aucune question trouvée pour ce thème',
+        });
         return;
       }
 
-      const soloQuestions = questions.map(q => ({
+      const soloQuestions = questions.map((q) => ({
         id: q.id,
         theme: q.theme,
         questionText: q.questionText,
@@ -264,17 +294,23 @@ export class GatewayService {
       }));
 
       client?.emit('soloQuestions', { questions: soloQuestions });
-      console.log(`Mode solo démarré pour ${clientId} avec ${questions.length} questions (thème: ${theme || 'aléatoire'})`);
+      console.log(
+        `Mode solo démarré pour ${clientId} avec ${questions.length} questions (thème: ${theme || 'aléatoire'})`,
+      );
     } catch (error) {
       console.error('Erreur lors du démarrage du quiz solo:', error);
       const client = this.server.sockets.sockets.get(clientId);
-      client?.emit('error', { message: 'Erreur lors du démarrage du quiz solo. Veuillez réessayer.' });
+      client?.emit('error', {
+        message: 'Erreur lors du démarrage du quiz solo. Veuillez réessayer.',
+      });
     }
   }
 
   async startQuiz(clientId: string, payload: StartQuizPayload) {
     const client = this.server.sockets.sockets.get(clientId);
-    client?.emit('error', { message: 'Le quiz multijoueur ne peut être lancé manuellement' });
+    client?.emit('error', {
+      message: 'Le quiz multijoueur ne peut être lancé manuellement',
+    });
   }
 
   submitAnswer(clientId: string, payload: SubmitAnswerPayload) {
@@ -287,7 +323,9 @@ export class GatewayService {
     }
 
     if (session.isWatching) {
-      client?.emit('error', { message: 'Vous êtes en mode surveillance - réponses bloquées' });
+      client?.emit('error', {
+        message: 'Vous êtes en mode surveillance - réponses bloquées',
+      });
       return;
     }
 
@@ -302,8 +340,11 @@ export class GatewayService {
       return;
     }
 
-    const isFinalQuestion = this.globalQuiz && this.globalQuiz.currentQuestionIndex === this.globalQuiz.questions.length - 1;
-    
+    const isFinalQuestion =
+      this.globalQuiz &&
+      this.globalQuiz.currentQuestionIndex ===
+        this.globalQuiz.questions.length - 1;
+
     if (isFinalQuestion) {
       const isCorrect = currentQuestion.correctResponse === payload.answer;
       if (isCorrect) {
@@ -312,8 +353,15 @@ export class GatewayService {
       }
     }
 
-    session.pendingAnswer = { questionId: payload.questionId, answer: payload.answer };
-    client?.emit('answerQueued', { questionId: payload.questionId, answer: payload.answer, timeLeft: session.timeLeft });
+    session.pendingAnswer = {
+      questionId: payload.questionId,
+      answer: payload.answer,
+    };
+    client?.emit('answerQueued', {
+      questionId: payload.questionId,
+      answer: payload.answer,
+      timeLeft: session.timeLeft,
+    });
     this.broadcastPlayerStats();
   }
 
@@ -326,7 +374,10 @@ export class GatewayService {
       this.globalQuiz!.timerInterval = setInterval(() => {
         if (!this.globalQuiz) return;
         this.globalQuiz.timeLeft--;
-        this.server.emit('timerUpdate', { timeLeft: this.globalQuiz.timeLeft, ...this.getPlayerStats() });
+        this.server.emit('timerUpdate', {
+          timeLeft: this.globalQuiz.timeLeft,
+          ...this.getPlayerStats(),
+        });
 
         if (this.globalQuiz.timeLeft <= 0) {
           this.handleGlobalTimeExpired();
@@ -355,27 +406,30 @@ export class GatewayService {
 
   private sendCurrentQuestion(client: Socket, session: QuizSession) {
     const currentQuestion = session.questions[session.currentIndex];
-    
+
     let previousAnswer: any = null;
     if (session.answers.length > 0) {
       const lastAnswer = session.answers[session.answers.length - 1];
       const previousQuestionIndex = session.currentIndex - 1;
-      
+
       if (previousQuestionIndex >= 0) {
         const previousQuestion = session.questions[previousQuestionIndex];
         const correctAnswer = previousQuestion.correctResponse;
-        const correctResponseText = this.getResponseText(previousQuestion, correctAnswer);
-        
+        const correctResponseText = this.getResponseText(
+          previousQuestion,
+          correctAnswer,
+        );
+
         previousAnswer = {
           ...lastAnswer,
           correctAnswer: correctAnswer,
-          correctResponseText: correctResponseText
+          correctResponseText: correctResponseText,
         };
       } else {
         previousAnswer = lastAnswer;
       }
     }
-    
+
     client.emit('quizQuestion', {
       question: {
         id: currentQuestion.id,
@@ -394,21 +448,27 @@ export class GatewayService {
       ...this.getPlayerStats(),
     });
   }
-  
+
   private getResponseText(question: any, responseIndex: number): string {
     switch (responseIndex) {
-      case 1: return question.response1 || '';
-      case 2: return question.response2 || '';
-      case 3: return question.response3 || '';
-      case 4: return question.response4 || '';
-      default: return '';
+      case 1:
+        return question.response1 || '';
+      case 2:
+        return question.response2 || '';
+      case 3:
+        return question.response3 || '';
+      case 4:
+        return question.response4 || '';
+      default:
+        return '';
     }
   }
 
   private handleGlobalTimeExpired() {
     if (!this.globalQuiz) return;
 
-    if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
+    if (this.globalQuiz.timerInterval)
+      clearInterval(this.globalQuiz.timerInterval);
     if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
 
     this.quizSessions.forEach((session, clientId) => {
@@ -417,7 +477,11 @@ export class GatewayService {
         let userAnswer = 0;
         let isCorrect = false;
 
-        if (!session.isWatching && session.pendingAnswer && session.pendingAnswer.questionId === currentQuestion.id) {
+        if (
+          !session.isWatching &&
+          session.pendingAnswer &&
+          session.pendingAnswer.questionId === currentQuestion.id
+        ) {
           userAnswer = session.pendingAnswer.answer;
           isCorrect = currentQuestion.correctResponse === userAnswer;
           if (isCorrect) {
@@ -425,7 +489,10 @@ export class GatewayService {
             const participant = this.globalQuiz!.participants?.get(clientId);
             if (participant) {
               participant.score = session.score;
-              if (this.globalQuiz!.currentQuestionIndex === this.globalQuiz!.questions.length - 1) {
+              if (
+                this.globalQuiz!.currentQuestionIndex ===
+                this.globalQuiz!.questions.length - 1
+              ) {
                 participant.finishedAt = new Date();
               }
             }
@@ -445,7 +512,7 @@ export class GatewayService {
           correct: isCorrect,
           submittedAt,
         };
-        
+
         session.answers.push(answerData);
         const participant = this.globalQuiz!.participants?.get(clientId);
         if (participant) {
@@ -462,11 +529,15 @@ export class GatewayService {
 
     this.globalQuiz.currentQuestionIndex++;
 
-    if (this.globalQuiz.currentQuestionIndex >= this.globalQuiz.questions.length) {
+    if (
+      this.globalQuiz.currentQuestionIndex >= this.globalQuiz.questions.length
+    ) {
       this.completeGlobalQuiz();
     } else {
-      const isNextQuestionFinal = this.globalQuiz.currentQuestionIndex === this.globalQuiz.questions.length - 1;
-      
+      const isNextQuestionFinal =
+        this.globalQuiz.currentQuestionIndex ===
+        this.globalQuiz.questions.length - 1;
+
       if (isNextQuestionFinal) {
         this.startAdBreakBeforeFinalQuestion();
       } else {
@@ -474,23 +545,24 @@ export class GatewayService {
         this.startGlobalQuiz();
       }
     }
-    
+
     this.scheduleStatsBroadcast();
   }
 
   private async completeGlobalQuiz() {
     if (!this.globalQuiz) return;
 
-    if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
+    if (this.globalQuiz.timerInterval)
+      clearInterval(this.globalQuiz.timerInterval);
     if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
 
     let winnerSessionId: string | null = null;
     let winnerUsername: string | null = null;
     let winnerPhone: string | null = null;
-    
+
     if (this.globalQuiz.event && this.globalQuiz.participants.size > 0) {
       const participants = Array.from(this.globalQuiz.participants.values())
-        .filter(p => p.lastCorrectAnswerTime)
+        .filter((p) => p.lastCorrectAnswerTime)
         .sort((a, b) => a.lastCorrectAnswerTime! - b.lastCorrectAnswerTime!);
 
       if (participants.length > 0) {
@@ -498,18 +570,26 @@ export class GatewayService {
         const winnerInfo = await this.getWinnerInfo(winnerSessionId);
         winnerUsername = winnerInfo.username || null;
         winnerPhone = winnerInfo.phoneNumber || null;
-        
+
         if (winnerPhone) {
-          await this.eventService.completeEvent(this.globalQuiz.event.id, winnerPhone);
+          await this.eventService.completeEvent(
+            this.globalQuiz.event.id,
+            winnerPhone,
+          );
         } else {
-          await this.eventService.completeEvent(this.globalQuiz.event.id, winnerSessionId);
+          await this.eventService.completeEvent(
+            this.globalQuiz.event.id,
+            winnerSessionId,
+          );
         }
 
         this.server.emit('eventCompleted', {
           eventId: this.globalQuiz.event.id,
           winner: winnerUsername || winnerSessionId,
           winnerPhone,
-          winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${winnerSessionId}`,
+          winnerDisplay: winnerUsername
+            ? `🏆 ${winnerUsername}`
+            : `Session: ${winnerSessionId}`,
         });
       }
     }
@@ -536,24 +616,142 @@ export class GatewayService {
   }
 
   private getPlayerStats(): PlayerStats {
-    const activePlayers = Array.from(this.quizSessions.values()).filter(s => !s.isWatching).length;
-    const watchingPlayers = Array.from(this.quizSessions.values()).filter(s => s.isWatching).length;
-    return { activePlayers, watchingPlayers, totalPlayers: activePlayers + watchingPlayers };
+    const activePlayers = Array.from(this.quizSessions.values()).filter(
+      (s) => !s.isWatching,
+    ).length;
+    const watchingPlayers = Array.from(this.quizSessions.values()).filter(
+      (s) => s.isWatching,
+    ).length;
+    return {
+      activePlayers,
+      watchingPlayers,
+      totalPlayers: activePlayers + watchingPlayers,
+    };
   }
 
   private broadcastPlayerStats() {
     this.server.emit('playerStats', this.getPlayerStats());
   }
 
-  authenticateUser(clientId: string, token: string) {
-    const userSession = this.userSessions.get(clientId);
-    if (userSession) {
-      userSession.token = token;
-      userSession.userId = this.extractUserIdFromToken(token);
-      userSession.isAuthenticated = true;
-      userSession.userType = 'authenticated';
-      this.scheduleStatsBroadcast(); 
+authenticateUser(clientId: string, token: string) {
+  const userId = this.extractUserIdFromToken(token);
+
+  if (!userId) {
+    console.warn("Impossible d'extraire l'ID utilisateur du token");
+    return;
+  }
+
+  console.log(`🔐 Authentification user ${userId} pour client ${clientId}`);
+
+  // ✅ VÉRIFIER SI L'UTILISATEUR EST DÉJÀ CONNECTÉ AILLEURS
+  const existingClientId = this.userToClientMap.get(userId);
+  
+  if (existingClientId && existingClientId !== clientId) {
+    // Récupérer le token de l'ancienne session
+    const existingSession = this.userSessions.get(existingClientId);
+    const existingToken = existingSession?.token;
+    
+    console.log(`🔍 Comparaison tokens - Nouveau: ${token.substring(0, 20)}..., Ancien: ${existingToken?.substring(0, 20)}...`);
+    
+    // ✅ SI LES TOKENS SONT DIFFÉRENTS = AUTRE NAVIGATEUR → DÉCONNECTER
+    if (existingToken && existingToken !== token) {
+      console.log(`🚨 Tokens différents → Déconnexion ancienne session ${existingClientId}`);
+      this.forceDisconnect(existingClientId);
+    } else {
+      // ✅ MÊME TOKEN = MÊME NAVIGATEUR → AUTORISER
+      console.log(`✅ Même token → Nouvel onglet autorisé pour ${userId}`);
     }
+  }
+
+  // Mettre à jour ou créer la session utilisateur
+  const userSession = this.userSessions.get(clientId) || {
+    socketId: clientId,
+    token: '',
+    userId: undefined,
+    isConnected: true,
+    isParticipating: false,
+    isAuthenticated: false,
+    userType: 'guest',
+    connectedAt: new Date(),
+  };
+
+  userSession.token = token; // ✅ TOUJOURS METTRE À JOUR LE TOKEN
+  userSession.userId = userId;
+  userSession.isAuthenticated = true;
+  userSession.userType = 'authenticated';
+
+  this.userSessions.set(clientId, userSession);
+  this.userToClientMap.set(userId, clientId);
+
+  console.log(`✅ User ${userId} authentifié sur client ${clientId}`);
+  this.scheduleStatsBroadcast();
+}
+
+  private forceDisconnect(clientId: string) {
+    console.log(`🚨🚨🚨 FORCE DISCONNECT DÉCLENCHÉ POUR: ${clientId}`);
+
+    // Vérifier si le socket existe toujours
+    const clientSocket = this.server.sockets.sockets.get(clientId);
+    if (clientSocket && clientSocket.connected) {
+      console.log(`✅ Socket ${clientId} est connecté, envoi de forceLogout`);
+
+      // 🔥 ENVOYER L'ÉVÉNEMENT FORCE LOGOUT
+      this.server.to(clientId).emit('forceLogout', {
+        reason: 'Nouvelle connexion détectée depuis un autre navigateur',
+        immediate: true,
+        timestamp: new Date().toISOString(),
+      });
+
+      console.log(`📤 Événement forceLogout envoyé à ${clientId}`);
+
+      // Forcer la déconnexion après envoi du message
+      setTimeout(() => {
+        if (this.server.sockets.sockets.get(clientId)) {
+          console.log(`🔌 Déconnexion forcée de ${clientId}`);
+          clientSocket.disconnect(true);
+        }
+      }, 500);
+    } else {
+      console.log(`❌ Socket ${clientId} n'est pas connecté ou n'existe pas`);
+    }
+
+    // 🔥 NETTOYER LES SESSIONS
+    this.cleanupUserSession(clientId);
+  }
+
+  private cleanupUserSession(clientId: string) {
+    const userSession = this.userSessions.get(clientId);
+
+    // ✅ NETTOYER LE MAPPING userToClientMap
+    if (userSession?.userId) {
+      const currentClientId = this.userToClientMap.get(userSession.userId);
+      if (currentClientId === clientId) {
+        this.userToClientMap.delete(userSession.userId);
+      }
+    }
+
+    this.userSessions.delete(clientId);
+
+    // ... le reste de votre logique de nettoyage existante
+    const session = this.quizSessions.get(clientId);
+    if (session?.timer) clearTimeout(session.timer);
+    if (session?.timerInterval) clearInterval(session.timerInterval);
+    this.quizSessions.delete(clientId);
+
+    if (this.globalQuiz?.participants) {
+      this.globalQuiz.participants.delete(clientId);
+    }
+
+    if (this.currentLobby?.participants.has(clientId)) {
+      this.currentLobby.participants.delete(clientId);
+      console.log(
+        `Joueur ${clientId} retiré du lobby. Total: ${this.currentLobby.participants.size}`,
+      );
+      this.broadcastLobbyUpdate();
+    }
+
+    this.broadcastPlayerStats();
+    this.scheduleStatsBroadcast();
   }
 
   private extractUserIdFromToken(token: string): string | undefined {
@@ -562,59 +760,83 @@ export class GatewayService {
       const payload = JSON.parse(atob(cleanToken.split('.')[1]));
       return payload.sub || payload.userId || payload.id;
     } catch (error) {
-      console.warn('Impossible d\'extraire l\'ID utilisateur du token');
+      console.warn("Impossible d'extraire l'ID utilisateur du token");
       return undefined;
     }
   }
 
-  private extractUserInfoFromToken(token: string): { userId?: string; username?: string; phoneNumber?: string } {
+  private extractUserInfoFromToken(token: string): {
+    userId?: string;
+    username?: string;
+    phoneNumber?: string;
+  } {
     try {
       const cleanToken = token.replace('Bearer ', '');
       const payload = JSON.parse(atob(cleanToken.split('.')[1]));
       return {
         userId: payload.sub || payload.userId || payload.id,
         username: payload.username,
-        phoneNumber: payload.phoneNumber
+        phoneNumber: payload.phoneNumber,
       };
     } catch (error) {
-      console.warn('Impossible d\'extraire les informations utilisateur du token');
+      console.warn(
+        "Impossible d'extraire les informations utilisateur du token",
+      );
       return {};
     }
   }
 
-  private async getWinnerInfo(sessionId: string): Promise<{ username?: string; phoneNumber?: string; userId?: string }> {
+  private async getWinnerInfo(
+    sessionId: string,
+  ): Promise<{ username?: string; phoneNumber?: string; userId?: string }> {
     const userSession = this.userSessions.get(sessionId);
     if (!userSession || !userSession.token) return {};
     return this.extractUserInfoFromToken(userSession.token);
   }
 
-  private updateUserParticipation(clientId: string, isParticipating: boolean, mode?: 'play' | 'watch') {
+  private updateUserParticipation(
+    clientId: string,
+    isParticipating: boolean,
+    mode?: 'play' | 'watch',
+  ) {
     const userSession = this.userSessions.get(clientId);
     if (userSession) {
       userSession.isParticipating = isParticipating;
       userSession.participationMode = mode;
-      console.log(`🔄 Updated user ${clientId} participation:`, { 
-        isParticipating, 
+      console.log(`🔄 Updated user ${clientId} participation:`, {
+        isParticipating,
         mode,
-        previousMode: userSession.participationMode 
+        previousMode: userSession.participationMode,
       });
-      this.scheduleStatsBroadcast(); 
+      this.scheduleStatsBroadcast();
     }
   }
 
   private getUserStats() {
     const sessions = Array.from(this.userSessions.values());
-    const connectedUsers = sessions.filter(s => s.isConnected).length;
-    const authenticatedUsers = sessions.filter(s => s.isAuthenticated).length;
-    const guestUsers = sessions.filter(s => !s.isAuthenticated).length;
-    const participatingUsers = sessions.filter(s => s.isParticipating).length;
-    const playingUsers = sessions.filter(s => s.participationMode === 'play').length;
-    const watchingUsers = sessions.filter(s => s.participationMode === 'watch').length;
-    const authenticatedPlaying = sessions.filter(s => s.isAuthenticated && s.participationMode === 'play').length;
-    const guestPlaying = sessions.filter(s => !s.isAuthenticated && s.participationMode === 'play').length;
-    const authenticatedWatching = sessions.filter(s => s.isAuthenticated && s.participationMode === 'watch').length;
-    const guestWatching = sessions.filter(s => !s.isAuthenticated && s.participationMode === 'watch').length;
-    
+    const connectedUsers = sessions.filter((s) => s.isConnected).length;
+    const authenticatedUsers = sessions.filter((s) => s.isAuthenticated).length;
+    const guestUsers = sessions.filter((s) => !s.isAuthenticated).length;
+    const participatingUsers = sessions.filter((s) => s.isParticipating).length;
+    const playingUsers = sessions.filter(
+      (s) => s.participationMode === 'play',
+    ).length;
+    const watchingUsers = sessions.filter(
+      (s) => s.participationMode === 'watch',
+    ).length;
+    const authenticatedPlaying = sessions.filter(
+      (s) => s.isAuthenticated && s.participationMode === 'play',
+    ).length;
+    const guestPlaying = sessions.filter(
+      (s) => !s.isAuthenticated && s.participationMode === 'play',
+    ).length;
+    const authenticatedWatching = sessions.filter(
+      (s) => s.isAuthenticated && s.participationMode === 'watch',
+    ).length;
+    const guestWatching = sessions.filter(
+      (s) => !s.isAuthenticated && s.participationMode === 'watch',
+    ).length;
+
     return {
       connectedUsers,
       authenticatedUsers,
@@ -626,7 +848,7 @@ export class GatewayService {
       guestPlaying,
       authenticatedWatching,
       guestWatching,
-      totalSessions: sessions.length
+      totalSessions: sessions.length,
     };
   }
 
@@ -678,7 +900,7 @@ export class GatewayService {
         if (this.currentLobby || this.isGlobalQuizActive()) return;
         await this.checkAndOpenLobbyIfNeeded();
       } catch (error) {
-        console.error('❌ Erreur dans le scheduler d\'événements:', error);
+        console.error("❌ Erreur dans le scheduler d'événements:", error);
       }
     }, 3000);
 
@@ -692,7 +914,9 @@ export class GatewayService {
           const lobbyTime = eventTime - 5 * 60 * 1000;
           const endTime = eventTime + 2 * 60 * 1000;
           if (now >= lobbyTime && now <= endTime) {
-            console.log(`🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`);
+            console.log(
+              `🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`,
+            );
             await this.openEventLobby(event);
             break;
           }
@@ -705,7 +929,7 @@ export class GatewayService {
 
   private async openEventLobby(event: Event) {
     if (this.currentLobby || this.isGlobalQuizActive()) return;
-    
+
     this.currentLobby = {
       event,
       participants: new Set(),
@@ -761,13 +985,18 @@ export class GatewayService {
       clearInterval(this.currentLobby.countdownTimer);
     }
 
-    console.log(`Vérification finale des participants: ${this.currentLobby.participants.size}`);
+    console.log(
+      `Vérification finale des participants: ${this.currentLobby.participants.size}`,
+    );
     console.log('Participants:', Array.from(this.currentLobby.participants));
 
     if (this.currentLobby.participants.size > 0) {
       console.log("Démarrage de l'événement avec les joueurs présents");
       const lobbyParticipants = new Set(this.currentLobby.participants);
-      await this.startEventQuiz(this.currentLobby.event, lobbyParticipants as Set<string>);
+      await this.startEventQuiz(
+        this.currentLobby.event,
+        lobbyParticipants as Set<string>,
+      );
     } else {
       console.log('Événement annulé - aucun joueur');
       this.server.emit('eventCancelled', {
@@ -785,8 +1014,11 @@ export class GatewayService {
     console.log(`=== DÉMARRAGE QUIZ ÉVÉNEMENT ===`);
     console.log(`Thème: ${event.theme}`);
     console.log(`Nombre de questions demandées: ${event.numberOfQuestions}`);
-    
-    const questions = await this.getQuestionsByTheme(event.theme, event.numberOfQuestions);
+
+    const questions = await this.getQuestionsByTheme(
+      event.theme,
+      event.numberOfQuestions,
+    );
     console.log(`Nombre de questions récupérées: ${questions.length}`);
 
     this.globalQuiz = {
@@ -800,7 +1032,11 @@ export class GatewayService {
     };
 
     participants.forEach((clientId) => {
-      this.globalQuiz!.participants.set(clientId, { clientId, score: 0, answers: [] } as QuizParticipant);
+      this.globalQuiz!.participants.set(clientId, {
+        clientId,
+        score: 0,
+        answers: [],
+      } as QuizParticipant);
       const session: QuizSession = {
         questions,
         currentIndex: 0,
@@ -815,15 +1051,27 @@ export class GatewayService {
       this.updateUserParticipation(clientId, true, 'play');
     });
 
-    console.log(`Quiz démarré avec ${participants.size} participants et ${questions.length} questions`);
+    console.log(
+      `Quiz démarré avec ${participants.size} participants et ${questions.length} questions`,
+    );
     console.log(`=== FIN DÉMARRAGE QUIZ ÉVÉNEMENT ===`);
 
-    this.server.emit('eventStarted', { event: { id: event.id, theme: event.theme, numberOfQuestions: event.numberOfQuestions } });
+    this.server.emit('eventStarted', {
+      event: {
+        id: event.id,
+        theme: event.theme,
+        numberOfQuestions: event.numberOfQuestions,
+      },
+    });
 
     participants.forEach((clientId) => {
       const client = this.server.sockets.sockets.get(clientId);
       if (client) {
-        client.emit('autoStartQuiz', { theme: event.theme, limit: event.numberOfQuestions, timeLimit: 30 });
+        client.emit('autoStartQuiz', {
+          theme: event.theme,
+          limit: event.numberOfQuestions,
+          timeLimit: 30,
+        });
       }
     });
 
@@ -839,7 +1087,9 @@ export class GatewayService {
 
     const wasAlreadyInLobby = this.currentLobby.participants.has(clientId);
     this.currentLobby.participants.add(clientId);
-    console.log(`Joueur ${clientId} ${wasAlreadyInLobby ? 'déjà dans' : 'a rejoint'} le lobby. Total: ${this.currentLobby.participants.size}`);
+    console.log(
+      `Joueur ${clientId} ${wasAlreadyInLobby ? 'déjà dans' : 'a rejoint'} le lobby. Total: ${this.currentLobby.participants.size}`,
+    );
     this.broadcastLobbyUpdate();
 
     const client = this.server.sockets.sockets.get(clientId);
@@ -850,77 +1100,92 @@ export class GatewayService {
   }
 
   // Permet de rejoindre un événement déjà en cours en mode "watch"
- joinOngoingEvent(clientId: string) {
-  if (!this.isGlobalQuizActive() || !this.globalQuiz) {
+  joinOngoingEvent(clientId: string) {
+    if (!this.isGlobalQuizActive() || !this.globalQuiz) {
+      const client = this.server.sockets.sockets.get(clientId);
+      client?.emit('error', { message: 'Aucun événement en cours' });
+      return;
+    }
+
+    // If the session exists already, just update the mode if needed
+    const existingSession = this.quizSessions.get(clientId);
     const client = this.server.sockets.sockets.get(clientId);
-    client?.emit('error', { message: 'Aucun événement en cours' });
-    return;
-  }
 
-  // If the session exists already, just update the mode if needed
-  const existingSession = this.quizSessions.get(clientId);
-  const client = this.server.sockets.sockets.get(clientId);
-  
-  if (existingSession) {
-    // If user was playing but should now be watching, update their mode
-    if (!existingSession.isWatching && this.shouldBeInWatchMode(clientId)) {
-      existingSession.isWatching = true;
-      this.updateUserParticipation(clientId, true, 'watch');
+    if (existingSession) {
+      // If user was playing but should now be watching, update their mode
+      if (!existingSession.isWatching && this.shouldBeInWatchMode(clientId)) {
+        existingSession.isWatching = true;
+        this.updateUserParticipation(clientId, true, 'watch');
+      }
+      this.sendCurrentQuestion(client!, existingSession);
+      client?.emit('joinedInProgress', {
+        mode: existingSession.isWatching ? 'watch' : 'play',
+      });
+      return;
     }
-    this.sendCurrentQuestion(client!, existingSession);
-    client?.emit('joinedInProgress', { mode: existingSession.isWatching ? 'watch' : 'play' });
-    return;
+
+    // Determine mode: player if first question not expired, otherwise watcher
+    const isFirstQuestionActive =
+      this.globalQuiz.currentQuestionIndex === 0 &&
+      this.globalQuiz.timeLeft > 0;
+    const isWatching =
+      !isFirstQuestionActive || this.shouldBeInWatchMode(clientId);
+
+    const session: QuizSession = {
+      questions: this.globalQuiz.questions,
+      currentIndex: this.globalQuiz.currentQuestionIndex,
+      score: 0,
+      answers: [],
+      isWatching,
+      timeLimit: this.globalQuiz.timeLimit,
+      timeLeft: this.globalQuiz.timeLeft,
+      joinedAt: this.globalQuiz.currentQuestionIndex,
+    };
+
+    this.quizSessions.set(clientId, session);
+    this.globalQuiz.participants.set(clientId, {
+      clientId,
+      score: 0,
+      answers: [],
+    } as QuizParticipant);
+
+    // CRITICAL FIX: Update user participation with correct mode
+    this.updateUserParticipation(clientId, true, isWatching ? 'watch' : 'play');
+
+    this.sendCurrentQuestion(client!, session);
+    client?.emit('joinedInProgress', { mode: isWatching ? 'watch' : 'play' });
+    this.broadcastPlayerStats();
+    this.broadcastUserStats(); // Make sure to broadcast updated user stats
   }
 
-  // Determine mode: player if first question not expired, otherwise watcher
-  const isFirstQuestionActive = this.globalQuiz.currentQuestionIndex === 0 && this.globalQuiz.timeLeft > 0;
-  const isWatching = !isFirstQuestionActive || this.shouldBeInWatchMode(clientId);
+  // Add this helper method to determine if user should be in watch mode
+  private shouldBeInWatchMode(clientId: string): boolean {
+    if (!this.globalQuiz) return true;
 
-  const session: QuizSession = {
-    questions: this.globalQuiz.questions,
-    currentIndex: this.globalQuiz.currentQuestionIndex,
-    score: 0,
-    answers: [],
-    isWatching,
-    timeLimit: this.globalQuiz.timeLimit,
-    timeLeft: this.globalQuiz.timeLeft,
-    joinedAt: this.globalQuiz.currentQuestionIndex,
-  };
-
-  this.quizSessions.set(clientId, session);
-  this.globalQuiz.participants.set(clientId, { clientId, score: 0, answers: [] } as QuizParticipant);
-  
-  // CRITICAL FIX: Update user participation with correct mode
-  this.updateUserParticipation(clientId, true, isWatching ? 'watch' : 'play');
-
-  this.sendCurrentQuestion(client!, session);
-  client?.emit('joinedInProgress', { mode: isWatching ? 'watch' : 'play' });
-  this.broadcastPlayerStats();
-  this.broadcastUserStats(); // Make sure to broadcast updated user stats
-}
-
-// Add this helper method to determine if user should be in watch mode
-private shouldBeInWatchMode(clientId: string): boolean {
-  if (!this.globalQuiz) return true;
-  
-  const participant = this.globalQuiz.participants.get(clientId);
-  // If user has already answered incorrectly in this quiz, they should be watching
-  if (participant && participant.answers.length > 0) {
-    const lastAnswer = participant.answers[participant.answers.length - 1];
-    if (!lastAnswer.correct && lastAnswer.questionId === this.globalQuiz.questions[this.globalQuiz.currentQuestionIndex]?.id) {
-      return true;
+    const participant = this.globalQuiz.participants.get(clientId);
+    // If user has already answered incorrectly in this quiz, they should be watching
+    if (participant && participant.answers.length > 0) {
+      const lastAnswer = participant.answers[participant.answers.length - 1];
+      if (
+        !lastAnswer.correct &&
+        lastAnswer.questionId ===
+          this.globalQuiz.questions[this.globalQuiz.currentQuestionIndex]?.id
+      ) {
+        return true;
+      }
     }
+
+    // If it's not the first question or time has expired, user should watch
+    return (
+      this.globalQuiz.currentQuestionIndex > 0 || this.globalQuiz.timeLeft <= 0
+    );
   }
-  
-  // If it's not the first question or time has expired, user should watch
-  return this.globalQuiz.currentQuestionIndex > 0 || this.globalQuiz.timeLeft <= 0;
-}
-
-
 
   private broadcastLobbyUpdate() {
     if (!this.currentLobby) return;
-    console.log(`Mise à jour lobby: ${this.currentLobby.participants.size}/${this.currentLobby.event.minPlayers} participants`);
+    console.log(
+      `Mise à jour lobby: ${this.currentLobby.participants.size}/${this.currentLobby.event.minPlayers} participants`,
+    );
     this.server.emit('lobbyUpdate', {
       participants: this.currentLobby.participants.size,
       minPlayers: this.currentLobby.event.minPlayers,
@@ -979,21 +1244,22 @@ private shouldBeInWatchMode(clientId: string): boolean {
 
   private async checkPendingEvents() {
     console.log('=== VÉRIFICATION ÉVÉNEMENTS ===');
-    
-    if (this.currentLobby || this.isGlobalQuizActive()) { // ✅ CORRECTION CLÉ
+
+    if (this.currentLobby || this.isGlobalQuizActive()) {
+      // ✅ CORRECTION CLÉ
       console.log('Un lobby est déjà ouvert ou un quiz est en cours');
       return;
     }
-    
+
     const eventsReady = await this.eventService.getEventsReadyForLobby();
     console.log(`Événements prêts: ${eventsReady.length}`);
-    
+
     for (const event of eventsReady) {
       const now = new Date().getTime();
       const eventTime = new Date(event.startDate).getTime();
       const lobbyTime = eventTime - 5 * 60 * 1000;
       const endTime = eventTime + 2 * 60 * 1000;
-      
+
       if (now >= lobbyTime && now <= endTime) {
         console.log(`\n🚀 OUVERTURE DU LOBBY`);
         this.currentLobby = {
@@ -1002,11 +1268,11 @@ private shouldBeInWatchMode(clientId: string): boolean {
           countdownTimer: undefined,
           lobbyTimer: undefined,
         };
-        
+
         if (!event.lobbyOpen) {
           await this.eventService.openLobby(event.id);
         }
-        
+
         this.startEventCountdown();
         this.server.emit('lobbyOpened', {
           event: {
@@ -1027,28 +1293,31 @@ private shouldBeInWatchMode(clientId: string): boolean {
   private async checkAndOpenLobbyIfNeeded() {
     try {
       console.log('🔍 VÉRIFICATION IMMÉDIATE À LA CONNEXION');
-      
-      if (this.currentLobby || this.isGlobalQuizActive()) { // ✅ CORRECTION CLÉ
+
+      if (this.currentLobby || this.isGlobalQuizActive()) {
+        // ✅ CORRECTION CLÉ
         console.log('✅ Lobby déjà ouvert ou quiz en cours');
         return;
       }
-      
+
       const activeEvents = await this.eventService.findActiveEvents();
       console.log(`📋 ${activeEvents.length} événements actifs trouvés`);
-      
+
       const now = new Date().getTime();
-      
+
       for (const event of activeEvents) {
         const eventTime = new Date(event.startDate).getTime();
         const lobbyTime = eventTime - 5 * 60 * 1000;
         const endTime = eventTime + 2 * 60 * 1000;
         const timeUntilEvent = Math.round((eventTime - now) / 1000);
-        
+
         console.log(`\n🎯 Événement: ${event.theme}`);
         console.log(`⏰ Temps jusqu'à l'événement: ${timeUntilEvent}s`);
         console.log(`🚪 Lobby ouvert en DB: ${event.lobbyOpen}`);
-        console.log(`📅 Dans la fenêtre de lobby: ${now >= lobbyTime && now <= endTime}`);
-        
+        console.log(
+          `📅 Dans la fenêtre de lobby: ${now >= lobbyTime && now <= endTime}`,
+        );
+
         if (now >= lobbyTime && now <= endTime) {
           console.log('🚀 CONDITIONS REMPLIES - OUVERTURE DU LOBBY');
           await this.openEventLobby(event);
@@ -1074,48 +1343,59 @@ private shouldBeInWatchMode(clientId: string): boolean {
   private async debugEventStatus() {
     const now = new Date();
     const events = await this.eventService.findActiveEvents();
-    
+
     console.log('=== DEBUG STATUS ===');
     console.log(`Heure actuelle: ${now.toLocaleString()}`);
     console.log(`Lobby actuel: ${this.currentLobby ? 'OUVERT' : 'FERMÉ'}`);
     console.log(`Quiz global actif: ${this.isGlobalQuizActive()}`);
     console.log(`Événements actifs: ${events.length}`);
-    
+
     for (const event of events) {
       const eventTime = new Date(event.startDate).getTime();
       const lobbyTime = eventTime - 5 * 60 * 1000;
       const endTime = eventTime + 2 * 60 * 1000;
       const nowTime = now.getTime();
-      
+
       console.log(`\n--- Événement: ${event.theme} ---`);
       console.log(`ID: ${event.id}`);
       console.log(`Heure événement: ${new Date(eventTime).toLocaleString()}`);
-      console.log(`Fenêtre lobby: ${new Date(lobbyTime).toLocaleString()} - ${new Date(endTime).toLocaleString()}`);
+      console.log(
+        `Fenêtre lobby: ${new Date(lobbyTime).toLocaleString()} - ${new Date(endTime).toLocaleString()}`,
+      );
       console.log(`Lobby ouvert: ${event.lobbyOpen}`);
-      console.log(`Dans fenêtre: ${nowTime >= lobbyTime && nowTime <= endTime}`);
-      console.log(`Temps jusqu'au lobby: ${Math.round((lobbyTime - nowTime) / 1000)}s`);
+      console.log(
+        `Dans fenêtre: ${nowTime >= lobbyTime && nowTime <= endTime}`,
+      );
+      console.log(
+        `Temps jusqu'au lobby: ${Math.round((lobbyTime - nowTime) / 1000)}s`,
+      );
     }
     console.log('===================\n');
   }
 
   private async emergencyLobbyCheck() {
     try {
-      console.log('🚨 VÉRIFICATION D\'URGENCE DES LOBBIES');
-      
-      if (this.currentLobby || this.isGlobalQuizActive()) { // ✅ CORRECTION CLÉ
-        console.log('✅ Lobby ouvert ou quiz en cours — pas d\'action');
+      console.log("🚨 VÉRIFICATION D'URGENCE DES LOBBIES");
+
+      if (this.currentLobby || this.isGlobalQuizActive()) {
+        // ✅ CORRECTION CLÉ
+        console.log("✅ Lobby ouvert ou quiz en cours — pas d'action");
         return;
       }
-      
+
       const eventsInWindow = await this.eventService.getEventsInLobbyWindow();
-      
+
       if (eventsInWindow.length > 0) {
-        console.log(`⚠️  ALERTE: ${eventsInWindow.length} événement(s) dans la fenêtre de lobby mais aucun lobby ouvert!`);
+        console.log(
+          `⚠️  ALERTE: ${eventsInWindow.length} événement(s) dans la fenêtre de lobby mais aucun lobby ouvert!`,
+        );
         for (const event of eventsInWindow) {
           const now = new Date().getTime();
           const eventTime = new Date(event.startDate).getTime();
           const timeUntilEvent = Math.round((eventTime - now) / 1000);
-          console.log(`🔧 CORRECTION: Ouverture forcée du lobby pour "${event.theme}" (dans ${timeUntilEvent}s)`);
+          console.log(
+            `🔧 CORRECTION: Ouverture forcée du lobby pour "${event.theme}" (dans ${timeUntilEvent}s)`,
+          );
           await this.openEventLobby(event);
           this.server.emit('emergencyLobbyOpened', {
             event: {
@@ -1125,7 +1405,7 @@ private shouldBeInWatchMode(clientId: string): boolean {
               startDate: event.startDate,
               minPlayers: event.minPlayers,
             },
-            message: 'Lobby ouvert automatiquement - événement imminent!'
+            message: 'Lobby ouvert automatiquement - événement imminent!',
           });
           break;
         }
@@ -1133,7 +1413,7 @@ private shouldBeInWatchMode(clientId: string): boolean {
         console.log('✅ Aucun événement dans la fenêtre de lobby');
       }
     } catch (error) {
-      console.error('❌ Erreur lors de la vérification d\'urgence:', error);
+      console.error("❌ Erreur lors de la vérification d'urgence:", error);
     }
   }
 
@@ -1147,7 +1427,9 @@ private shouldBeInWatchMode(clientId: string): boolean {
     const wasInLobby = this.currentLobby.participants.has(clientId);
     if (wasInLobby) {
       this.currentLobby.participants.delete(clientId);
-      console.log(`Joueur ${clientId} a quitté le lobby. Total: ${this.currentLobby.participants.size}`);
+      console.log(
+        `Joueur ${clientId} a quitté le lobby. Total: ${this.currentLobby.participants.size}`,
+      );
       this.broadcastLobbyUpdate();
     }
 
@@ -1166,11 +1448,11 @@ private shouldBeInWatchMode(clientId: string): boolean {
 
   private destroyCurrentLobby(reason: string = 'Lobby détruit') {
     if (!this.currentLobby) return;
-    
+
     console.log(`💥 DESTRUCTION COMPLÈTE DU LOBBY: ${reason}`);
-    
+
     const eventId = this.currentLobby.event.id;
-    
+
     // Nettoyer tous les timers
     if (this.currentLobby.countdownTimer) {
       clearInterval(this.currentLobby.countdownTimer);
@@ -1180,29 +1462,29 @@ private shouldBeInWatchMode(clientId: string): boolean {
       clearTimeout(this.currentLobby.lobbyTimer);
       this.currentLobby.lobbyTimer = undefined;
     }
-    
+
     // Détruire complètement l'objet AVANT notification
     this.currentLobby = null;
-    
+
     // FORCER les notifications de fermeture
     this.server.emit('lobbyClosed', { reason, eventId });
     this.server.emit('lobbyStatus', { isOpen: false, event: null });
-    
+
     console.log(`✅ Lobby complètement détruit`);
   }
 
   async forceEventUpdate(eventId: string) {
     console.log(`🔄 MISE À JOUR FORCÉE DE L'ÉVÉNEMENT: ${eventId}`);
-    
+
     // FORCER la destruction du lobby actuel s'il correspond à cet événement
     if (this.currentLobby && this.currentLobby.event.id === eventId) {
-      this.destroyCurrentLobby('Mise à jour forcée de l\'événement');
+      this.destroyCurrentLobby("Mise à jour forcée de l'événement");
     }
-    
+
     // Récupérer et traiter l'événement mis à jour
     const events = await this.eventService.findActiveEvents();
-    const updatedEvent = events.find(e => e.id === eventId);
-    
+    const updatedEvent = events.find((e) => e.id === eventId);
+
     if (updatedEvent) {
       await this.handleEventUpdated(updatedEvent);
     }
@@ -1212,13 +1494,15 @@ private shouldBeInWatchMode(clientId: string): boolean {
   private startAdBreakBeforeFinalQuestion() {
     if (!this.globalQuiz) return;
 
-    console.log('📺 Démarrage de la pause publicitaire avant la dernière question');
-    
+    console.log(
+      '📺 Démarrage de la pause publicitaire avant la dernière question',
+    );
+
     // Envoyer l'événement de pause publicitaire à tous les clients
     this.server.emit('adBreakStarted', {
       duration: 15, // 15 secondes
       message: 'Pause publicitaire avant la dernière question',
-      isFinalQuestion: true
+      isFinalQuestion: true,
     });
 
     // Démarrer le compte à rebours de 15 secondes
@@ -1226,11 +1510,11 @@ private shouldBeInWatchMode(clientId: string): boolean {
     const adCountdownInterval = setInterval(() => {
       countdown--;
       this.server.emit('adBreakCountdown', { timeLeft: countdown });
-      
+
       if (countdown <= 0) {
         clearInterval(adCountdownInterval);
         this.server.emit('adBreakEnded');
-        
+
         // Démarrer la dernière question après la publicité
         this.globalQuiz!.timeLeft = this.globalQuiz!.timeLimit;
         this.startGlobalQuiz();
@@ -1239,19 +1523,25 @@ private shouldBeInWatchMode(clientId: string): boolean {
   }
 
   // Nouvelle méthode pour gérer la première réponse correcte sur la dernière question
-  private async handleFinalQuestionCorrectAnswer(clientId: string, payload: SubmitAnswerPayload) {
+  private async handleFinalQuestionCorrectAnswer(
+    clientId: string,
+    payload: SubmitAnswerPayload,
+  ) {
     if (!this.globalQuiz) return;
 
-    console.log(`🏆 Première réponse correcte sur la dernière question par ${clientId}`);
-    
+    console.log(
+      `🏆 Première réponse correcte sur la dernière question par ${clientId}`,
+    );
+
     // Arrêter tous les timers
-    if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
+    if (this.globalQuiz.timerInterval)
+      clearInterval(this.globalQuiz.timerInterval);
     if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
 
     const session = this.quizSessions.get(clientId);
     if (session) {
       const currentQuestion = session.questions[session.currentIndex];
-      
+
       // Marquer la réponse comme correcte
       session.score++;
       const participant = this.globalQuiz.participants?.get(clientId);
@@ -1259,14 +1549,14 @@ private shouldBeInWatchMode(clientId: string): boolean {
         participant.score = session.score;
         participant.finishedAt = new Date();
         participant.lastCorrectAnswerTime = Date.now();
-        
+
         const answerData = {
           questionId: currentQuestion.id,
           userAnswer: payload.answer,
           correct: true,
           submittedAt: Date.now(),
         };
-        
+
         session.answers.push(answerData);
         participant.answers.push(answerData);
       }
@@ -1276,13 +1566,19 @@ private shouldBeInWatchMode(clientId: string): boolean {
     const winnerInfo = await this.getWinnerInfo(clientId);
     const winnerUsername = winnerInfo.username || null;
     const winnerPhone = winnerInfo.phoneNumber || null;
-    
+
     // Fermer l'événement immédiatement
     if (this.globalQuiz.event) {
       if (winnerPhone) {
-        await this.eventService.completeEvent(this.globalQuiz.event.id, winnerPhone);
+        await this.eventService.completeEvent(
+          this.globalQuiz.event.id,
+          winnerPhone,
+        );
       } else {
-        await this.eventService.completeEvent(this.globalQuiz.event.id, clientId);
+        await this.eventService.completeEvent(
+          this.globalQuiz.event.id,
+          clientId,
+        );
       }
 
       // Envoyer l'événement de victoire immédiate
@@ -1290,8 +1586,10 @@ private shouldBeInWatchMode(clientId: string): boolean {
         eventId: this.globalQuiz.event.id,
         winner: winnerUsername || clientId,
         winnerPhone,
-        winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${clientId}`,
-        message: 'Première réponse correcte sur la dernière question !'
+        winnerDisplay: winnerUsername
+          ? `🏆 ${winnerUsername}`
+          : `Session: ${clientId}`,
+        message: 'Première réponse correcte sur la dernière question !',
       });
     }
 
@@ -1306,7 +1604,7 @@ private shouldBeInWatchMode(clientId: string): boolean {
           joinedAt: session.joinedAt,
           winner: winnerUsername || clientId,
           isWinner: sessionClientId === clientId,
-          immediateWin: true
+          immediateWin: true,
         });
       }
     });
@@ -1323,11 +1621,11 @@ private shouldBeInWatchMode(clientId: string): boolean {
     try {
       const now = new Date().getTime();
       const activeEvents = await this.eventService.findActiveEvents();
-      
+
       for (const event of activeEvents) {
         const eventTime = new Date(event.startDate).getTime();
         const maxWindow = eventTime + 2 * 60 * 1000; // 2 min après
-        
+
         if (now > maxWindow && !event.isCompleted) {
           console.log(`🧹 Nettoyage automatique: ${event.theme}`);
           await this.eventService.updateEvent(event.id, { isCompleted: true });
