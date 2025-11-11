@@ -5,7 +5,7 @@ import { Event } from '../model/event.entity';
 
 @Injectable()
 export class EventService implements OnModuleInit, OnModuleDestroy {
-  private eventInterval: NodeJS.Timeout;
+  private lobbyInterval: NodeJS.Timeout;
 
   constructor(
     @InjectModel(Event.name)
@@ -13,59 +13,90 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    // Start the interval when the module initializes
-    this.startEventScheduler();
+    // Start only the lobby scheduler when the module initializes
+    this.startLobbyScheduler();
+    
+    // Check if we need to create an initial event on startup
+    this.initializeFirstEvent();
   }
 
   onModuleDestroy() {
     // Clear the interval when the module is destroyed
-    if (this.eventInterval) {
-      clearInterval(this.eventInterval);
+    if (this.lobbyInterval) {
+      clearInterval(this.lobbyInterval);
     }
   }
 
-  private startEventScheduler(): void {
-    // Run every 15 minutes (900,000 milliseconds)
-    this.eventInterval = setInterval(async () => {
-      await this.createScheduledEvent();
-    }, 15 * 60 * 1000);
-
-    // Also run immediately on startup
-    this.createScheduledEvent();
-  }
-
-  async createScheduledEvent(): Promise<void> {
-    console.log('⏰ Checking for scheduled event creation...');
-    
+  private async initializeFirstEvent(): Promise<void> {
     try {
-      const now = new Date();
-      const nextEventTime = new Date(now.getTime() + 15 * 60 * 1000); // 15 minutes from now
+      // Check if there are any active events
+      const activeEvents = await this.findActiveEvents();
       
-      // Check if there's already an event scheduled for this time window
-      const existingEvent = await this.eventModel.findOne({
-        startDate: {
-          $gte: new Date(nextEventTime.getTime() - 2 * 60 * 1000), // 2 minutes before
-          $lte: new Date(nextEventTime.getTime() + 2 * 60 * 1000)  // 2 minutes after
-        },
-        isCompleted: false
-      }).exec();
-
-      if (!existingEvent) {
-        // Create a new event
-        const theme = `Online Event - ${nextEventTime.toLocaleTimeString()}`;
-        const event = await this.createEvent(
-          theme,
-          nextEventTime,
-          5, // default number of questions
-          2   // default min players
-        );
+      if (activeEvents.length === 0) {
+        // No active events, create one starting in 15 minutes
+        const startDate = new Date(Date.now() + 15 * 60 * 1000);
+        const theme = `Online Event - ${startDate.toLocaleTimeString()}`;
         
-        console.log(`✅ Auto-created event: ${theme} at ${nextEventTime}`);
+        await this.createEvent(theme, startDate, 5, 2);
+        console.log(`✅ Created initial event: ${theme} at ${startDate}`);
       } else {
-        console.log(`⏭️  Event already exists for this time slot: ${existingEvent.theme}`);
+        console.log(`⏭️ Active events already exist, no need for initial event`);
       }
     } catch (error) {
-      console.error('❌ Error creating scheduled event:', error);
+      console.error('❌ Error creating initial event:', error);
+    }
+  }
+
+  private startLobbyScheduler(): void {
+    // Run every minute to check for events that need lobby opened
+    this.lobbyInterval = setInterval(async () => {
+      await this.checkAndOpenLobbies();
+    }, 60 * 1000);
+
+    // Also run immediately on startup
+    this.checkAndOpenLobbies();
+  }
+
+ async checkAndOpenLobbies(): Promise<void> {
+  console.log('🔓 Checking for events that need lobby opened...');
+  
+  try {
+    const now = new Date();
+    const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
+    
+    // Find events that start in exactly 2 minutes and don't have lobby open yet
+    const eventsToOpen = await this.eventModel.find({
+      isCompleted: false,
+      lobbyOpen: false,
+      startDate: {
+        $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before 2-minute mark
+        $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000)  // 30 seconds after 2-minute mark
+      }
+    }).exec();
+
+for (const event of eventsToOpen) {
+  await this.openLobby((event._id as any).toString());
+  console.log(`✅ Auto-opened lobby for event: ${event.theme} starting at ${event.startDate}`);
+}
+
+    if (eventsToOpen.length === 0) {
+      console.log('⏭️ No events need lobby opening at this time');
+    }
+  } catch (error) {
+    console.error('❌ Error opening lobbies:', error);
+  }
+}
+
+  async scheduleNextEvent(): Promise<void> {
+    try {
+      // Create next event 15 minutes from now
+      const nextEventTime = new Date(Date.now() + 15 * 60 * 1000);
+      const theme = `Online Event - ${nextEventTime.toLocaleTimeString()}`;
+      
+      await this.createEvent(theme, nextEventTime, 5, 2);
+      console.log(`✅ Scheduled next event: ${theme} at ${nextEventTime}`);
+    } catch (error) {
+      console.error('❌ Error scheduling next event:', error);
     }
   }
 
@@ -75,19 +106,28 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
   async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
     console.log(`🏁 Finalisation de l'événement ${eventId} avec le gagnant: ${winnerPhone}`);
-    const result = await this.eventModel.findByIdAndUpdate(
-      eventId,
-      { winner: winnerPhone, isCompleted: true },
-      { new: true }
-    ).exec();
     
-    if (result) {
-      console.log(`✅ Événement finalisé avec succès: ${result.theme}`);
-    } else {
-      console.log(`❌ Échec de la finalisation de l'événement ${eventId}`);
+    try {
+      const result = await this.eventModel.findByIdAndUpdate(
+        eventId,
+        { winner: winnerPhone, isCompleted: true },
+        { new: true }
+      ).exec();
+      
+      if (result) {
+        console.log(`✅ Événement finalisé avec succès: ${result.theme}`);
+        
+        // Schedule the next event 15 minutes from now
+        await this.scheduleNextEvent();
+      } else {
+        console.log(`❌ Échec de la finalisation de l'événement ${eventId}`);
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error completing event:', error);
+      throw error;
     }
-    
-    return result;
   }
 
   async createEvent(theme: string, startDate: Date, numberOfQuestions: number, minPlayers: number = 2): Promise<Event> {
@@ -95,7 +135,10 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       theme,
       startDate,
       numberOfQuestions,
-      minPlayers
+      minPlayers,
+      lobbyOpen: false,
+      isStarted: false,
+      isCompleted: false
     });
     return event.save();
   }
@@ -105,7 +148,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     return this.eventModel
       .findOne({
         isCompleted: false,
-        startDate: { $gt: new Date(now.getTime() - 2 * 60 * 1000) }
+        startDate: { $gt: now }
       })
       .sort({ startDate: 1 })
       .exec();
@@ -130,27 +173,27 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
   async getEventsReadyForLobby(): Promise<Event[]> {
     const now = new Date();
-    const twoMinutesBefore = new Date(now.getTime() - 2 * 60 * 1000);
+    const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
     
     return this.eventModel.find({
       isCompleted: false,
       startDate: { 
-        $gte: twoMinutesBefore,
-        $lte: new Date(now.getTime() + 2 * 60 * 1000)
-      }
+        $lte: twoMinutesFromNow,
+        $gt: now
+      },
+      lobbyOpen: false
     }).sort({ startDate: 1 }).exec();
   }
 
   async getEventsInLobbyWindow(): Promise<Event[]> {
     const now = new Date();
     const twoMinutesBefore = new Date(now.getTime() - 2 * 60 * 1000);
-    const twoMinutesAfter = new Date(now.getTime() + 2 * 60 * 1000);
     
     return this.eventModel.find({
       isCompleted: false,
       startDate: { 
         $gte: twoMinutesBefore,
-        $lte: twoMinutesAfter
+        $lte: now
       }
     }).sort({ startDate: 1 }).exec();
   }
@@ -179,5 +222,20 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       { new: true }
     ).exec();
     return result;
+  }
+
+  // Helper method to get events that should have their lobby opened now
+  async getEventsNeedingLobbyOpen(): Promise<Event[]> {
+    const now = new Date();
+    const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
+    
+    return this.eventModel.find({
+      isCompleted: false,
+      lobbyOpen: false,
+      startDate: {
+        $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds buffer
+        $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000)  // 30 seconds buffer
+      }
+    }).exec();
   }
 }
