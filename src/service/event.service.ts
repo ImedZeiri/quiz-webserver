@@ -25,10 +25,10 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   }
 
   private startEventScheduler(): void {
-    // Run every 10 minutes (600,000 milliseconds)
+    // Run every 15 minutes (900,000 milliseconds)
     this.eventInterval = setInterval(async () => {
       await this.createScheduledEvent();
-    }, 10 * 60 * 1000);
+    }, 15 * 60 * 1000);
 
     // Also run immediately on startup
     this.createScheduledEvent();
@@ -39,7 +39,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     
     try {
       const now = new Date();
-      const nextEventTime = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes from now
+      const nextEventTime = new Date(now.getTime() + 15 * 60 * 1000); // 15 minutes from now
       
       // Check if there's already an event scheduled for this time window
       const existingEvent = await this.eventModel.findOne({
@@ -130,26 +130,26 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
   async getEventsReadyForLobby(): Promise<Event[]> {
     const now = new Date();
-    const fiveMinutesBefore = new Date(now.getTime() - 5 * 60 * 1000);
+    const twoMinutesBefore = new Date(now.getTime() - 2 * 60 * 1000);
     
     return this.eventModel.find({
       isCompleted: false,
       startDate: { 
-        $gte: fiveMinutesBefore,
-        $lte: new Date(now.getTime() + 5 * 60 * 1000)
+        $gte: twoMinutesBefore,
+        $lte: new Date(now.getTime() + 2 * 60 * 1000)
       }
     }).sort({ startDate: 1 }).exec();
   }
 
   async getEventsInLobbyWindow(): Promise<Event[]> {
     const now = new Date();
-    const fiveMinutesBefore = new Date(now.getTime() - 5 * 60 * 1000);
+    const twoMinutesBefore = new Date(now.getTime() - 2 * 60 * 1000);
     const twoMinutesAfter = new Date(now.getTime() + 2 * 60 * 1000);
     
     return this.eventModel.find({
       isCompleted: false,
       startDate: { 
-        $gte: fiveMinutesBefore,
+        $gte: twoMinutesBefore,
         $lte: twoMinutesAfter
       }
     }).sort({ startDate: 1 }).exec();

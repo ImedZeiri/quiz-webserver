@@ -793,8 +793,8 @@ export class GatewayService {
       isActive: true,
       currentQuestionIndex: 0,
       questions,
-      timeLimit: 30,
-      timeLeft: 30,
+      timeLimit: 15,
+      timeLeft: 15,
       event,
       participants: new Map(),
     };
@@ -807,8 +807,8 @@ export class GatewayService {
         score: 0,
         answers: [],
         isWatching: false,
-        timeLimit: 30,
-        timeLeft: 30,
+        timeLimit: 15,
+        timeLeft: 15,
         joinedAt: 0,
       };
       this.quizSessions.set(clientId, session);
