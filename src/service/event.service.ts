@@ -6,7 +6,6 @@ import { Event } from '../model/event.entity';
 @Injectable()
 export class EventService implements OnModuleInit, OnModuleDestroy {
   private lobbyInterval: NodeJS.Timeout;
-  private eventCreationInterval: NodeJS.Timeout;
 
   constructor(
     @InjectModel(Event.name)
@@ -14,97 +13,80 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    // Start both schedulers when the module initializes
+    // Start only the lobby scheduler when the module initializes
     this.startLobbyScheduler();
-    this.startEventCreationScheduler();
     
     // Check if we need to create an initial event on startup
     this.initializeFirstEvent();
   }
 
   onModuleDestroy() {
-    // Clear all intervals when the module is destroyed
+    // Clear the interval when the module is destroyed
     if (this.lobbyInterval) {
       clearInterval(this.lobbyInterval);
-    }
-    if (this.eventCreationInterval) {
-      clearInterval(this.eventCreationInterval);
-    }
-  }
-
-  private startEventCreationScheduler(): void {
-    // Create events every 15 minutes
-    this.eventCreationInterval = setInterval(async () => {
-      await this.createScheduledEvent();
-    }, 15 * 60 * 1000); // 15 minutes
-
-    console.log('✅ Event creation scheduler started - creating events every 15 minutes');
-  }
-
-  private async createScheduledEvent(): Promise<void> {
-    try {
-      // Calculate next event time (15 minutes from now)
-      const startDate = new Date(Date.now() + 15 * 60 * 1000);
-      const theme = `Online Event - ${startDate.toLocaleTimeString()}`;
-      
-      await this.createEvent(theme, startDate, 5, 2);
-      console.log(`✅ Created scheduled event: ${theme} at ${startDate}`);
-    } catch (error) {
-      console.error('❌ Error creating scheduled event:', error);
     }
   }
 
   private async initializeFirstEvent(): Promise<void> {
     try {
-      // Check if there are any upcoming events in the next 30 minutes
-      const now = new Date();
-      const thirtyMinutesFromNow = new Date(now.getTime() + 30 * 60 * 1000);
+      // Check if there are any active events
+      const activeEvents = await this.findActiveEvents();
       
-      const upcomingEvents = await this.eventModel.find({
-        isCompleted: false,
-        startDate: { $gte: now, $lte: thirtyMinutesFromNow }
-      }).sort({ startDate: 1 }).exec();
-      
-      if (upcomingEvents.length === 0) {
-        // No upcoming events, create one starting in 15 minutes
+      if (activeEvents.length === 0) {
+        // No active events, create one starting in 15 minutes
         const startDate = new Date(Date.now() + 15 * 60 * 1000);
         const theme = `Online Event - ${startDate.toLocaleTimeString()}`;
         
         await this.createEvent(theme, startDate, 5, 2);
         console.log(`✅ Created initial event: ${theme} at ${startDate}`);
       } else {
-        console.log(`⏭️ Upcoming events already exist, no need for initial event`);
+        console.log(`⏭️ Active events already exist, no need for initial event`);
         
-        // Schedule the next event creation based on the last event
-        const lastEvent = upcomingEvents[upcomingEvents.length - 1];
-        const timeUntilNextEvent = lastEvent.startDate.getTime() - now.getTime() + 15 * 60 * 1000;
-        
-        if (timeUntilNextEvent > 0) {
-          setTimeout(() => {
-            this.createScheduledEvent();
-          }, timeUntilNextEvent);
-          
-          console.log(`⏰ Next event creation scheduled in ${Math.round(timeUntilNextEvent / 60000)} minutes`);
-        }
+        // Check if we need to schedule the next event based on the last active event
+        await this.checkAndScheduleNextEvent();
       }
     } catch (error) {
       console.error('❌ Error creating initial event:', error);
     }
   }
 
+  private async checkAndScheduleNextEvent(): Promise<void> {
+    try {
+      // Find the last event (whether completed or active)
+      const lastEvent = await this.eventModel
+        .findOne()
+        .sort({ startDate: -1 })
+        .exec();
+
+      if (lastEvent && lastEvent.isCompleted) {
+        // If the last event is completed, check if we need to schedule a new one
+        const nextEventExists = await this.eventModel.findOne({
+          isCompleted: false,
+          startDate: { $gt: new Date() }
+        }).exec();
+
+        if (!nextEventExists) {
+          // Schedule next event 15 minutes from now
+          await this.scheduleNextEvent();
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error checking and scheduling next event:', error);
+    }
+  }
+
   private startLobbyScheduler(): void {
-    // Run every minute to check for events that need lobby opened (2 minutes before start)
+    // Run every minute to check for events that need lobby opened
     this.lobbyInterval = setInterval(async () => {
       await this.checkAndOpenLobbies();
     }, 60 * 1000);
 
     // Also run immediately on startup
     this.checkAndOpenLobbies();
-    console.log('✅ Lobby scheduler started - checking every minute for lobby openings');
   }
 
   async checkAndOpenLobbies(): Promise<void> {
-    console.log('🔓 Checking for events that need lobby opened (2 minutes before start)...');
+    console.log('🔓 Checking for events that need lobby opened...');
     
     try {
       const now = new Date();
@@ -133,6 +115,36 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async scheduleNextEvent(): Promise<void> {
+    try {
+      // Create next event 15 minutes from now
+      const nextEventTime = new Date(Date.now() + 15 * 60 * 1000);
+      
+      // Check if there's already an event scheduled around this time
+      const existingEvent = await this.eventModel.findOne({
+        startDate: {
+          $gte: new Date(nextEventTime.getTime() - 2 * 60 * 1000), // 2 minutes before
+          $lte: new Date(nextEventTime.getTime() + 2 * 60 * 1000)  // 2 minutes after
+        },
+        isCompleted: false
+      }).exec();
+
+      if (!existingEvent) {
+        const theme = `Online Event - ${nextEventTime.toLocaleTimeString()}`;
+        await this.createEvent(theme, nextEventTime, 5, 2);
+        console.log(`✅ Scheduled next event: ${theme} at ${nextEventTime}`);
+      } else {
+        console.log(`⏭️ Event already exists for this time slot: ${existingEvent.theme}`);
+      }
+    } catch (error) {
+      console.error('❌ Error scheduling next event:', error);
+    }
+  }
+
+  async findActiveEvents(): Promise<Event[]> {
+    return this.eventModel.find({ isCompleted: false }).sort({ startDate: 1 }).exec();
+  }
+
   async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
     console.log(`🏁 Finalisation de l'événement ${eventId} avec le gagnant: ${winnerPhone}`);
     
@@ -146,7 +158,8 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       if (result) {
         console.log(`✅ Événement finalisé avec succès: ${result.theme}`);
         
-        // Note: No need to schedule next event here since we have the 15-minute interval
+        // Schedule the next event 15 minutes from now
+        await this.scheduleNextEvent();
       } else {
         console.log(`❌ Échec de la finalisation de l'événement ${eventId}`);
       }
@@ -250,31 +263,5 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       { new: true }
     ).exec();
     return result;
-  }
-
-  // Helper method to get events that should have their lobby opened now
-  async getEventsNeedingLobbyOpen(): Promise<Event[]> {
-    const now = new Date();
-    const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
-    
-    return this.eventModel.find({
-      isCompleted: false,
-      lobbyOpen: false,
-      startDate: {
-        $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds buffer
-        $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000)  // 30 seconds buffer
-      }
-    }).exec();
-  }
-
-  // Method to manually trigger event creation (for testing)
-  async manuallyCreateNextEvent(): Promise<Event> {
-    const startDate = new Date(Date.now() + 15 * 60 * 1000);
-    const theme = `Manual Event - ${startDate.toLocaleTimeString()}`;
-    
-    const event = await this.createEvent(theme, startDate, 5, 2);
-    console.log(`✅ Manually created event: ${theme} at ${startDate}`);
-    
-    return event;
   }
 }
