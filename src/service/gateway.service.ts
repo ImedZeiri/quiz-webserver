@@ -633,59 +633,63 @@ export class GatewayService {
     this.server.emit('playerStats', this.getPlayerStats());
   }
 
-authenticateUser(clientId: string, token: string) {
-  const userId = this.extractUserIdFromToken(token);
+  authenticateUser(clientId: string, token: string) {
+    const userId = this.extractUserIdFromToken(token);
 
-  if (!userId) {
-    console.warn("Impossible d'extraire l'ID utilisateur du token");
-    return;
-  }
-
-  console.log(`🔐 Authentification user ${userId} pour client ${clientId}`);
-
-  // ✅ VÉRIFIER SI L'UTILISATEUR EST DÉJÀ CONNECTÉ AILLEURS
-  const existingClientId = this.userToClientMap.get(userId);
-  
-  if (existingClientId && existingClientId !== clientId) {
-    // Récupérer le token de l'ancienne session
-    const existingSession = this.userSessions.get(existingClientId);
-    const existingToken = existingSession?.token;
-    
-    console.log(`🔍 Comparaison tokens - Nouveau: ${token.substring(0, 20)}..., Ancien: ${existingToken?.substring(0, 20)}...`);
-    
-    // ✅ SI LES TOKENS SONT DIFFÉRENTS = AUTRE NAVIGATEUR → DÉCONNECTER
-    if (existingToken && existingToken !== token) {
-      console.log(`🚨 Tokens différents → Déconnexion ancienne session ${existingClientId}`);
-      this.forceDisconnect(existingClientId);
-    } else {
-      // ✅ MÊME TOKEN = MÊME NAVIGATEUR → AUTORISER
-      console.log(`✅ Même token → Nouvel onglet autorisé pour ${userId}`);
+    if (!userId) {
+      console.warn("Impossible d'extraire l'ID utilisateur du token");
+      return;
     }
+
+    console.log(`🔐 Authentification user ${userId} pour client ${clientId}`);
+
+    // ✅ VÉRIFIER SI L'UTILISATEUR EST DÉJÀ CONNECTÉ AILLEURS
+    const existingClientId = this.userToClientMap.get(userId);
+
+    if (existingClientId && existingClientId !== clientId) {
+      // Récupérer le token de l'ancienne session
+      const existingSession = this.userSessions.get(existingClientId);
+      const existingToken = existingSession?.token;
+
+      console.log(
+        `🔍 Comparaison tokens - Nouveau: ${token.substring(0, 20)}..., Ancien: ${existingToken?.substring(0, 20)}...`,
+      );
+
+      // ✅ SI LES TOKENS SONT DIFFÉRENTS = AUTRE NAVIGATEUR → DÉCONNECTER
+      if (existingToken && existingToken !== token) {
+        console.log(
+          `🚨 Tokens différents → Déconnexion ancienne session ${existingClientId}`,
+        );
+        this.forceDisconnect(existingClientId);
+      } else {
+        // ✅ MÊME TOKEN = MÊME NAVIGATEUR → AUTORISER
+        console.log(`✅ Même token → Nouvel onglet autorisé pour ${userId}`);
+      }
+    }
+
+    // Mettre à jour ou créer la session utilisateur
+    const userSession = this.userSessions.get(clientId) || {
+      socketId: clientId,
+      token: '',
+      userId: undefined,
+      isConnected: true,
+      isParticipating: false,
+      isAuthenticated: false,
+      userType: 'guest',
+      connectedAt: new Date(),
+    };
+
+    userSession.token = token; // ✅ TOUJOURS METTRE À JOUR LE TOKEN
+    userSession.userId = userId;
+    userSession.isAuthenticated = true;
+    userSession.userType = 'authenticated';
+
+    this.userSessions.set(clientId, userSession);
+    this.userToClientMap.set(userId, clientId);
+
+    console.log(`✅ User ${userId} authentifié sur client ${clientId}`);
+    this.scheduleStatsBroadcast();
   }
-
-  // Mettre à jour ou créer la session utilisateur
-  const userSession = this.userSessions.get(clientId) || {
-    socketId: clientId,
-    token: '',
-    userId: undefined,
-    isConnected: true,
-    isParticipating: false,
-    isAuthenticated: false,
-    userType: 'guest',
-    connectedAt: new Date(),
-  };
-
-  userSession.token = token; // ✅ TOUJOURS METTRE À JOUR LE TOKEN
-  userSession.userId = userId;
-  userSession.isAuthenticated = true;
-  userSession.userType = 'authenticated';
-
-  this.userSessions.set(clientId, userSession);
-  this.userToClientMap.set(userId, clientId);
-
-  console.log(`✅ User ${userId} authentifié sur client ${clientId}`);
-  this.scheduleStatsBroadcast();
-}
 
   private forceDisconnect(clientId: string) {
     console.log(`🚨🚨🚨 FORCE DISCONNECT DÉCLENCHÉ POUR: ${clientId}`);
@@ -902,7 +906,7 @@ authenticateUser(clientId: string, token: string) {
       } catch (error) {
         console.error("❌ Erreur dans le scheduler d'événements:", error);
       }
-    }, 3000);
+    }, 80);
 
     setInterval(async () => {
       try {
@@ -1025,8 +1029,8 @@ authenticateUser(clientId: string, token: string) {
       isActive: true,
       currentQuestionIndex: 0,
       questions,
-      timeLimit: 30,
-      timeLeft: 30,
+      timeLimit: 15,
+      timeLeft: 15,
       event,
       participants: new Map(),
     };
@@ -1043,8 +1047,8 @@ authenticateUser(clientId: string, token: string) {
         score: 0,
         answers: [],
         isWatching: false,
-        timeLimit: 30,
-        timeLeft: 30,
+        timeLimit: 15,
+        timeLeft: 15,
         joinedAt: 0,
       };
       this.quizSessions.set(clientId, session);

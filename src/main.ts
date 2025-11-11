@@ -22,7 +22,7 @@ async function bootstrap() {
 
     app.useWebSocketAdapter(new IoAdapter(app));
     app.setGlobalPrefix('api');
-    const port = process.env.PORT || 3000;
+    const port = process.env.PORT || 80;
     await app.listen(port);
 
     console.log(` HTTP Server is running on: http://localhost:${port}`);
