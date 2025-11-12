@@ -80,7 +80,7 @@ export class GatewayService {
 
     const now = new Date().getTime();
     const eventTime = new Date(updatedEvent.startDate).getTime();
-    const maxWindow = eventTime
+    const maxWindow = eventTime;
 
     if (now > maxWindow && !updatedEvent.isCompleted) {
       console.log(
@@ -106,7 +106,7 @@ export class GatewayService {
 
       const newEventTime = new Date(updatedEvent.startDate).getTime();
       const newLobbyTime = newEventTime - 5 * 60 * 1000;
-      const newEndTime = newEventTime
+      const newEndTime = newEventTime;
 
       if (now >= newLobbyTime && now <= newEndTime) {
         this.currentLobby = {
@@ -156,7 +156,7 @@ export class GatewayService {
     } else if (!this.currentLobby && !this.isGlobalQuizActive()) {
       const newEventTime = new Date(updatedEvent.startDate).getTime();
       const newLobbyTime = newEventTime - 5 * 60 * 1000;
-      const newEndTime = newEventTime
+      const newEndTime = newEventTime;
 
       if (now >= newLobbyTime && now <= newEndTime) {
         console.log(`🚀 Ouverture d'un nouveau lobby suite à la modification`);
@@ -874,7 +874,7 @@ export class GatewayService {
     const eventTime = new Date(event.startDate).getTime();
     const lobbyTime = eventTime - 5 * 60 * 1000;
     const startTime = eventTime;
-    const endTime = eventTime 
+    const endTime = eventTime;
 
     console.log(`Planification événement: ${event.theme}`);
     console.log(`Heure actuelle: ${new Date(now).toLocaleString()}`);
@@ -916,7 +916,7 @@ export class GatewayService {
           const now = new Date().getTime();
           const eventTime = new Date(event.startDate).getTime();
           const lobbyTime = eventTime - 5 * 60 * 1000;
-          const endTime = eventTime
+          const endTime = eventTime;
           if (now >= lobbyTime && now <= endTime) {
             console.log(
               `🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`,
@@ -1262,7 +1262,7 @@ export class GatewayService {
       const now = new Date().getTime();
       const eventTime = new Date(event.startDate).getTime();
       const lobbyTime = eventTime - 5 * 60 * 1000;
-      const endTime = eventTime 
+      const endTime = eventTime;
 
       if (now >= lobbyTime && now <= endTime) {
         console.log(`\n🚀 OUVERTURE DU LOBBY`);
@@ -1312,7 +1312,7 @@ export class GatewayService {
       for (const event of activeEvents) {
         const eventTime = new Date(event.startDate).getTime();
         const lobbyTime = eventTime - 5 * 60 * 1000;
-        const endTime = eventTime 
+        const endTime = eventTime;
         const timeUntilEvent = Math.round((eventTime - now) / 1000);
 
         console.log(`\n🎯 Événement: ${event.theme}`);
@@ -1357,7 +1357,7 @@ export class GatewayService {
     for (const event of events) {
       const eventTime = new Date(event.startDate).getTime();
       const lobbyTime = eventTime - 5 * 60 * 1000;
-      const endTime = eventTime 
+      const endTime = eventTime;
       const nowTime = now.getTime();
 
       console.log(`\n--- Événement: ${event.theme} ---`);
@@ -1628,7 +1628,7 @@ export class GatewayService {
 
       for (const event of activeEvents) {
         const eventTime = new Date(event.startDate).getTime();
-        const maxWindow = eventTime 
+        const maxWindow = eventTime;
 
         if (now > maxWindow && !event.isCompleted) {
           console.log(`🧹 Nettoyage automatique: ${event.theme}`);
@@ -1640,4 +1640,3 @@ export class GatewayService {
     }
   }
 }
-
