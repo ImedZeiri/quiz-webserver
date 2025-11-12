@@ -872,7 +872,7 @@ export class GatewayService {
   private scheduleEventCountdown(event: Event) {
     const now = new Date().getTime();
     const eventTime = new Date(event.startDate).getTime();
-    const lobbyTime = eventTime - 2 * 60 * 1000;
+    const lobbyTime = eventTime - 5 * 60 * 1000;
     const startTime = eventTime;
     const endTime = eventTime 
 
@@ -915,7 +915,7 @@ export class GatewayService {
         for (const event of eventsReady) {
           const now = new Date().getTime();
           const eventTime = new Date(event.startDate).getTime();
-          const lobbyTime = eventTime - 2 * 60 * 1000;
+          const lobbyTime = eventTime - 5 * 60 * 1000;
           const endTime = eventTime
           if (now >= lobbyTime && now <= endTime) {
             console.log(
@@ -1261,7 +1261,7 @@ export class GatewayService {
     for (const event of eventsReady) {
       const now = new Date().getTime();
       const eventTime = new Date(event.startDate).getTime();
-      const lobbyTime = eventTime - 2 * 60 * 1000;
+      const lobbyTime = eventTime - 5 * 60 * 1000;
       const endTime = eventTime 
 
       if (now >= lobbyTime && now <= endTime) {
@@ -1311,7 +1311,7 @@ export class GatewayService {
 
       for (const event of activeEvents) {
         const eventTime = new Date(event.startDate).getTime();
-        const lobbyTime = eventTime - 2 * 60 * 1000;
+        const lobbyTime = eventTime - 5 * 60 * 1000;
         const endTime = eventTime 
         const timeUntilEvent = Math.round((eventTime - now) / 1000);
 
@@ -1356,7 +1356,7 @@ export class GatewayService {
 
     for (const event of events) {
       const eventTime = new Date(event.startDate).getTime();
-      const lobbyTime = eventTime - 2 * 60 * 1000;
+      const lobbyTime = eventTime - 5 * 60 * 1000;
       const endTime = eventTime 
       const nowTime = now.getTime();
 
