@@ -129,12 +129,20 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
+      let currentLastEvent = lastEvent;
+
       // Keep creating events until we're scheduled 2 hours ahead
+<<<<<<< HEAD
       while (lastEvent.startDate.getTime() < targetTime.getTime()) {
         const nextEventTime = new Date(
           lastEvent.startDate.getTime() + 15 * 60 * 1000,
         );
 
+=======
+      while (currentLastEvent.startDate.getTime() < targetTime.getTime()) {
+        const nextEventTime = new Date(currentLastEvent.startDate.getTime() + 15 * 60 * 1000);
+        
+>>>>>>> c094f374848278427bd15138d4bf2f1caea73c37
         // Check if event already exists at this time
         const existingEvent = await this.eventModel
           .findOne({
@@ -160,11 +168,12 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
           console.log(`✅ Scheduled event: ${theme} at ${nextEventTime}`);
         }
 
-        // Update lastEvent for next iteration
+        // Update currentLastEvent for next iteration
         const newLastEvent = await this.eventModel
           .findOne({ isCompleted: false })
           .sort({ startDate: -1 })
           .exec();
+<<<<<<< HEAD
 
         if (
           !newLastEvent ||
@@ -174,6 +183,22 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         }
 
         lastEvent.startDate = newLastEvent.startDate;
+=======
+          
+        if (!newLastEvent) {
+          break; // No events found, break the loop
+        }
+
+        // Type-safe ID comparison
+        const newLastEventId = (newLastEvent._id as any).toString();
+        const currentLastEventId = (currentLastEvent._id as any).toString();
+        
+        if (newLastEventId === currentLastEventId) {
+          break; // No new event was created, break the loop
+        }
+        
+        currentLastEvent = newLastEvent;
+>>>>>>> c094f374848278427bd15138d4bf2f1caea73c37
       }
     } catch (error) {
       console.error('❌ Error filling event schedule:', error);
@@ -252,10 +277,27 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+<<<<<<< HEAD
   async completeEvent(
     eventId: string,
     winnerPhone: string,
   ): Promise<Event | null> {
+=======
+  async getEventsInLobbyWindow(): Promise<Event[]> {
+    const now = new Date();
+    const twoMinutesBefore = new Date(now.getTime() - 2 * 60 * 1000);
+    
+    return this.eventModel.find({
+      isCompleted: false,
+      startDate: { 
+        $gte: twoMinutesBefore,
+        $lte: now
+      }
+    }).sort({ startDate: 1 }).exec();
+  }
+
+  async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
+>>>>>>> c094f374848278427bd15138d4bf2f1caea73c37
     console.log(`🏁 Completing event ${eventId} with winner: ${winnerPhone}`);
 
     try {
@@ -269,9 +311,12 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
       if (result) {
         console.log(`✅ Event completed successfully: ${result.theme}`);
+<<<<<<< HEAD
 
         // The event scheduler will automatically create new events
         // so we don't need to manually schedule here
+=======
+>>>>>>> c094f374848278427bd15138d4bf2f1caea73c37
       } else {
         console.log(`❌ Failed to complete event ${eventId}`);
       }
