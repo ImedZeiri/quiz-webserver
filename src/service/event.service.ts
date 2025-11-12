@@ -5,7 +5,8 @@ import { Event } from '../model/event.entity';
 
 @Injectable()
 export class EventService implements OnModuleInit, OnModuleDestroy {
-  private lobbyInterval: NodeJS.Timeout;
+  private eventSchedulerInterval: NodeJS.Timeout;
+  private lobbySchedulerInterval: NodeJS.Timeout;
 
   constructor(
     @InjectModel(Event.name)
@@ -13,99 +14,255 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    // Start only the lobby scheduler when the module initializes
+    // Start both schedulers when the module initializes
+    this.startEventScheduler();
     this.startLobbyScheduler();
     
-    // Check if we need to create an initial event on startup
-    this.initializeFirstEvent();
+    // Initialize events on startup
+    this.initializeEvents();
   }
 
   onModuleDestroy() {
-    // Clear the interval when the module is destroyed
-    if (this.lobbyInterval) {
-      clearInterval(this.lobbyInterval);
+    // Clear intervals when the module is destroyed
+    if (this.eventSchedulerInterval) {
+      clearInterval(this.eventSchedulerInterval);
+    }
+    if (this.lobbySchedulerInterval) {
+      clearInterval(this.lobbySchedulerInterval);
     }
   }
 
-  private async initializeFirstEvent(): Promise<void> {
+  private async initializeEvents(): Promise<void> {
     try {
-      // Check if there are any active events
-      const activeEvents = await this.findActiveEvents();
+      console.log('🚀 Initializing event schedule...');
       
-      if (activeEvents.length === 0) {
-        // No active events, create one starting in 15 minutes
-        const startDate = new Date(Date.now() + 15 * 60 * 1000);
-        const theme = `Online Event - ${startDate.toLocaleTimeString()}`;
-        
-        await this.createEvent(theme, startDate, 5, 2);
-        console.log(`✅ Created initial event: ${theme} at ${startDate}`);
+      // Check for existing upcoming events
+      const upcomingEvents = await this.eventModel.find({
+        isCompleted: false,
+        startDate: { $gt: new Date() }
+      }).sort({ startDate: 1 }).exec();
+
+      if (upcomingEvents.length === 0) {
+        // No upcoming events, create the first one starting in 15 minutes
+        await this.createNextEvent();
+        console.log('✅ Created initial event');
       } else {
-        console.log(`⏭️ Active events already exist, no need for initial event`);
+        console.log(`⏭️ Found ${upcomingEvents.length} upcoming events`);
+        
+        // Ensure we have events scheduled for the next few hours
+        await this.fillEventSchedule();
       }
     } catch (error) {
-      console.error('❌ Error creating initial event:', error);
+      console.error('❌ Error initializing events:', error);
     }
+  }
+
+  private startEventScheduler(): void {
+    // Check every minute for event scheduling needs
+    this.eventSchedulerInterval = setInterval(async () => {
+      await this.checkEventSchedule();
+    }, 60 * 1000);
+
+    // Run immediately on startup
+    this.checkEventSchedule();
   }
 
   private startLobbyScheduler(): void {
-    // Run every minute to check for events that need lobby opened
-    this.lobbyInterval = setInterval(async () => {
+    // Check every 30 seconds for lobbies that need to be opened
+    this.lobbySchedulerInterval = setInterval(async () => {
       await this.checkAndOpenLobbies();
-    }, 60 * 1000);
+    }, 30 * 1000);
 
-    // Also run immediately on startup
+    // Run immediately on startup
     this.checkAndOpenLobbies();
   }
 
- async checkAndOpenLobbies(): Promise<void> {
-  console.log('🔓 Checking for events that need lobby opened...');
-  
-  try {
-    const now = new Date();
-    const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
-    
-    // Find events that start in exactly 2 minutes and don't have lobby open yet
-    const eventsToOpen = await this.eventModel.find({
-      isCompleted: false,
-      lobbyOpen: false,
-      startDate: {
-        $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before 2-minute mark
-        $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000)  // 30 seconds after 2-minute mark
-      }
-    }).exec();
-
-for (const event of eventsToOpen) {
-  await this.openLobby((event._id as any).toString());
-  console.log(`✅ Auto-opened lobby for event: ${event.theme} starting at ${event.startDate}`);
-}
-
-    if (eventsToOpen.length === 0) {
-      console.log('⏭️ No events need lobby opening at this time');
-    }
-  } catch (error) {
-    console.error('❌ Error opening lobbies:', error);
-  }
-}
-
-  async scheduleNextEvent(): Promise<void> {
+  private async checkEventSchedule(): Promise<void> {
     try {
-      // Create next event 15 minutes from now
-      const nextEventTime = new Date(Date.now() + 15 * 60 * 1000);
-      const theme = `Online Event - ${nextEventTime.toLocaleTimeString()}`;
+      const now = new Date();
       
-      await this.createEvent(theme, nextEventTime, 5, 2);
-      console.log(`✅ Scheduled next event: ${theme} at ${nextEventTime}`);
+      // Look for the last scheduled event
+      const lastEvent = await this.eventModel
+        .findOne({ isCompleted: false })
+        .sort({ startDate: -1 })
+        .exec();
+
+      if (!lastEvent) {
+        // No events found, create one
+        await this.createNextEvent();
+        return;
+      }
+
+      // Calculate time until next event should be created
+      const timeSinceLastEvent = now.getTime() - lastEvent.startDate.getTime();
+      const fifteenMinutes = 15 * 60 * 1000;
+
+      if (timeSinceLastEvent >= fifteenMinutes) {
+        // It's time to create a new event
+        await this.createNextEvent();
+      }
+
+      // Also ensure we have events scheduled for the next few hours
+      await this.fillEventSchedule();
     } catch (error) {
-      console.error('❌ Error scheduling next event:', error);
+      console.error('❌ Error checking event schedule:', error);
     }
   }
 
-  async findActiveEvents(): Promise<Event[]> {
-    return this.eventModel.find({ isCompleted: false }).sort({ startDate: 1 }).exec();
+  private async fillEventSchedule(): Promise<void> {
+    try {
+      const now = new Date();
+      const lookAheadTime = 2 * 60 * 60 * 1000; // Look ahead 2 hours
+      const targetTime = new Date(now.getTime() + lookAheadTime);
+
+      // Find the last scheduled event
+      const lastEvent = await this.eventModel
+        .findOne({ isCompleted: false })
+        .sort({ startDate: -1 })
+        .exec();
+
+      if (!lastEvent) {
+        await this.createNextEvent();
+        return;
+      }
+
+      let currentLastEvent = lastEvent;
+
+      // Keep creating events until we're scheduled 2 hours ahead
+      while (currentLastEvent.startDate.getTime() < targetTime.getTime()) {
+        const nextEventTime = new Date(currentLastEvent.startDate.getTime() + 15 * 60 * 1000);
+        
+        // Check if event already exists at this time
+        const existingEvent = await this.eventModel.findOne({
+          startDate: {
+            $gte: new Date(nextEventTime.getTime() - 1 * 60 * 1000),
+            $lte: new Date(nextEventTime.getTime() + 1 * 60 * 1000)
+          },
+          isCompleted: false
+        }).exec();
+
+        if (!existingEvent) {
+          const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false 
+          })}`;
+          
+          await this.createEvent(
+            theme, 
+            nextEventTime, 
+            5, 
+            2
+          );
+          console.log(`✅ Scheduled event: ${theme} at ${nextEventTime}`);
+        }
+
+        // Update currentLastEvent for next iteration
+        const newLastEvent = await this.eventModel
+          .findOne({ isCompleted: false })
+          .sort({ startDate: -1 })
+          .exec();
+          
+        if (!newLastEvent) {
+          break; // No events found, break the loop
+        }
+
+        // Type-safe ID comparison
+        const newLastEventId = (newLastEvent._id as any).toString();
+        const currentLastEventId = (currentLastEvent._id as any).toString();
+        
+        if (newLastEventId === currentLastEventId) {
+          break; // No new event was created, break the loop
+        }
+        
+        currentLastEvent = newLastEvent;
+      }
+    } catch (error) {
+      console.error('❌ Error filling event schedule:', error);
+    }
+  }
+
+  private async createNextEvent(): Promise<void> {
+    try {
+      const now = new Date();
+      
+      // Find the last event to determine next start time
+      const lastEvent = await this.eventModel
+        .findOne()
+        .sort({ startDate: -1 })
+        .exec();
+
+      let nextEventTime: Date;
+
+      if (lastEvent && !lastEvent.isCompleted) {
+        // Schedule 15 minutes after the last event
+        nextEventTime = new Date(lastEvent.startDate.getTime() + 15 * 60 * 1000);
+        
+        // If the calculated time is in the past, schedule for 15 minutes from now
+        if (nextEventTime.getTime() <= now.getTime()) {
+          nextEventTime = new Date(now.getTime() + 15 * 60 * 1000);
+        }
+      } else {
+        // No events or last event is completed, schedule for 15 minutes from now
+        nextEventTime = new Date(now.getTime() + 15 * 60 * 1000);
+      }
+
+      const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false 
+      })}`;
+
+      await this.createEvent(theme, nextEventTime, 5, 2);
+      console.log(`✅ Created next event: ${theme} at ${nextEventTime}`);
+    } catch (error) {
+      console.error('❌ Error creating next event:', error);
+    }
+  }
+
+  async checkAndOpenLobbies(): Promise<void> {
+    try {
+      const now = new Date();
+      const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
+      
+      // Find events that start in exactly 2 minutes (±30 seconds) and don't have lobby open yet
+      const eventsToOpen = await this.eventModel.find({
+        isCompleted: false,
+        lobbyOpen: false,
+        startDate: {
+          $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before 2-minute mark
+          $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000)  // 30 seconds after 2-minute mark
+        }
+      }).exec();
+
+      for (const event of eventsToOpen) {
+        await this.openLobby((event._id as any).toString());
+        console.log(`🔓 Auto-opened lobby for event: "${event.theme}" starting at ${event.startDate.toLocaleTimeString()}`);
+      }
+
+      if (eventsToOpen.length > 0) {
+        console.log(`✅ Opened ${eventsToOpen.length} lobby/lobbies`);
+      }
+    } catch (error) {
+      console.error('❌ Error opening lobbies:', error);
+    }
+  }
+
+  async getEventsInLobbyWindow(): Promise<Event[]> {
+    const now = new Date();
+    const twoMinutesBefore = new Date(now.getTime() - 2 * 60 * 1000);
+    
+    return this.eventModel.find({
+      isCompleted: false,
+      startDate: { 
+        $gte: twoMinutesBefore,
+        $lte: now
+      }
+    }).sort({ startDate: 1 }).exec();
   }
 
   async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
-    console.log(`🏁 Finalisation de l'événement ${eventId} avec le gagnant: ${winnerPhone}`);
+    console.log(`🏁 Completing event ${eventId} with winner: ${winnerPhone}`);
     
     try {
       const result = await this.eventModel.findByIdAndUpdate(
@@ -115,12 +272,9 @@ for (const event of eventsToOpen) {
       ).exec();
       
       if (result) {
-        console.log(`✅ Événement finalisé avec succès: ${result.theme}`);
-        
-        // Schedule the next event 15 minutes from now
-        await this.scheduleNextEvent();
+        console.log(`✅ Event completed successfully: ${result.theme}`);
       } else {
-        console.log(`❌ Échec de la finalisation de l'événement ${eventId}`);
+        console.log(`❌ Failed to complete event ${eventId}`);
       }
       
       return result;
@@ -155,7 +309,7 @@ for (const event of eventsToOpen) {
   }
 
   async openLobby(eventId: string): Promise<Event | null> {
-    console.log(`🔓 Ouverture du lobby pour l'événement ${eventId}`);
+    console.log(`🔓 Opening lobby for event ${eventId}`);
     const result = await this.eventModel.findByIdAndUpdate(
       eventId,
       { lobbyOpen: true },
@@ -163,12 +317,16 @@ for (const event of eventsToOpen) {
     ).exec();
     
     if (result) {
-      console.log(`✅ Lobby ouvert avec succès pour: ${result.theme}`);
+      console.log(`✅ Lobby opened successfully for: ${result.theme}`);
     } else {
-      console.log(`❌ Échec de l'ouverture du lobby pour l'événement ${eventId}`);
+      console.log(`❌ Failed to open lobby for event ${eventId}`);
     }
     
     return result;
+  }
+
+  async findActiveEvents(): Promise<Event[]> {
+    return this.eventModel.find({ isCompleted: false }).sort({ startDate: 1 }).exec();
   }
 
   async getEventsReadyForLobby(): Promise<Event[]> {
@@ -185,21 +343,8 @@ for (const event of eventsToOpen) {
     }).sort({ startDate: 1 }).exec();
   }
 
-  async getEventsInLobbyWindow(): Promise<Event[]> {
-    const now = new Date();
-    const twoMinutesBefore = new Date(now.getTime() - 2 * 60 * 1000);
-    
-    return this.eventModel.find({
-      isCompleted: false,
-      startDate: { 
-        $gte: twoMinutesBefore,
-        $lte: now
-      }
-    }).sort({ startDate: 1 }).exec();
-  }
-
   async startEvent(eventId: string): Promise<Event | null> {
-    console.log(`🚀 Démarrage de l'événement ${eventId}`);
+    console.log(`🚀 Starting event ${eventId}`);
     const result = await this.eventModel.findByIdAndUpdate(
       eventId,
       { isStarted: true },
@@ -207,9 +352,9 @@ for (const event of eventsToOpen) {
     ).exec();
     
     if (result) {
-      console.log(`✅ Événement démarré avec succès: ${result.theme}`);
+      console.log(`✅ Event started successfully: ${result.theme}`);
     } else {
-      console.log(`❌ Échec du démarrage de l'événement ${eventId}`);
+      console.log(`❌ Failed to start event ${eventId}`);
     }
     
     return result;
@@ -224,18 +369,19 @@ for (const event of eventsToOpen) {
     return result;
   }
 
-  // Helper method to get events that should have their lobby opened now
-  async getEventsNeedingLobbyOpen(): Promise<Event[]> {
-    const now = new Date();
-    const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
+  // Utility method to get schedule overview
+  async getScheduleOverview(): Promise<{ upcomingEvents: Event[], nextLobbyOpen: Date | null }> {
+    const upcomingEvents = await this.findActiveEvents();
+    const nextEvent = upcomingEvents[0];
     
-    return this.eventModel.find({
-      isCompleted: false,
-      lobbyOpen: false,
-      startDate: {
-        $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds buffer
-        $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000)  // 30 seconds buffer
-      }
-    }).exec();
+    let nextLobbyOpen: Date | null = null;
+    if (nextEvent && !nextEvent.lobbyOpen) {
+      nextLobbyOpen = new Date(nextEvent.startDate.getTime() - 2 * 60 * 1000);
+    }
+
+    return {
+      upcomingEvents,
+      nextLobbyOpen
+    };
   }
 }
