@@ -73,3 +73,15 @@ export interface SoloQuestion {
 export interface SoloQuestionsResponse {
   questions: SoloQuestion[];
 }
+
+export interface UserSession {
+  socketId: string;
+  token: string;
+  userId?: string;
+  isConnected: boolean;
+  isParticipating: boolean;
+  isAuthenticated: boolean;
+  userType: 'guest' | 'authenticated';
+  connectedAt: Date;
+  participationMode?: 'play' | 'watch';
+}
