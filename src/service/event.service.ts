@@ -17,7 +17,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     // Start both schedulers when the module initializes
     this.startEventScheduler();
     this.startLobbyScheduler();
-    
+
     // Initialize events on startup
     this.initializeEvents();
   }
@@ -35,12 +35,15 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   private async initializeEvents(): Promise<void> {
     try {
       console.log('🚀 Initializing event schedule...');
-      
+
       // Check for existing upcoming events
-      const upcomingEvents = await this.eventModel.find({
-        isCompleted: false,
-        startDate: { $gt: new Date() }
-      }).sort({ startDate: 1 }).exec();
+      const upcomingEvents = await this.eventModel
+        .find({
+          isCompleted: false,
+          startDate: { $gt: new Date() },
+        })
+        .sort({ startDate: 1 })
+        .exec();
 
       if (upcomingEvents.length === 0) {
         // No upcoming events, create the first one starting in 15 minutes
@@ -48,7 +51,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         console.log('✅ Created initial event');
       } else {
         console.log(`⏭️ Found ${upcomingEvents.length} upcoming events`);
-        
+
         // Ensure we have events scheduled for the next few hours
         await this.fillEventSchedule();
       }
@@ -80,7 +83,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   private async checkEventSchedule(): Promise<void> {
     try {
       const now = new Date();
-      
+
       // Look for the last scheduled event
       const lastEvent = await this.eventModel
         .findOne({ isCompleted: false })
@@ -128,30 +131,32 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
       // Keep creating events until we're scheduled 2 hours ahead
       while (lastEvent.startDate.getTime() < targetTime.getTime()) {
-        const nextEventTime = new Date(lastEvent.startDate.getTime() + 15 * 60 * 1000);
-        
+        const nextEventTime = new Date(
+          lastEvent.startDate.getTime() + 15 * 60 * 1000,
+        );
+
         // Check if event already exists at this time
-        const existingEvent = await this.eventModel.findOne({
-          startDate: {
-            $gte: new Date(nextEventTime.getTime() - 1 * 60 * 1000),
-            $lte: new Date(nextEventTime.getTime() + 1 * 60 * 1000)
-          },
-          isCompleted: false
-        }).exec();
+        const existingEvent = await this.eventModel
+          .findOne({
+            startDate: {
+              $gte: new Date(nextEventTime.getTime() - 1 * 60 * 1000),
+              $lte: new Date(nextEventTime.getTime() + 1 * 60 * 1000),
+            },
+            isCompleted: false,
+          })
+          .exec();
 
         if (!existingEvent) {
-          const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', { 
-            hour: '2-digit', 
-            minute: '2-digit',
-            hour12: false 
-          })}`;
-          
-          await this.createEvent(
-            theme, 
-            nextEventTime, 
-            5, 
-            2
-          );
+          const theme = `Auto Event - ${nextEventTime.toLocaleTimeString(
+            'en-US',
+            {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            },
+          )}`;
+
+          await this.createEvent(theme, nextEventTime, 5, 2);
           console.log(`✅ Scheduled event: ${theme} at ${nextEventTime}`);
         }
 
@@ -160,11 +165,14 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
           .findOne({ isCompleted: false })
           .sort({ startDate: -1 })
           .exec();
-          
-        if (!newLastEvent || newLastEvent._id.toString() === lastEvent._id.toString()) {
+
+        if (
+          !newLastEvent ||
+          newLastEvent._id.toString() === lastEvent._id.toString()
+        ) {
           break; // No new event was created, break the loop
         }
-        
+
         lastEvent.startDate = newLastEvent.startDate;
       }
     } catch (error) {
@@ -175,7 +183,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   private async createNextEvent(): Promise<void> {
     try {
       const now = new Date();
-      
+
       // Find the last event to determine next start time
       const lastEvent = await this.eventModel
         .findOne()
@@ -186,8 +194,10 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
       if (lastEvent && !lastEvent.isCompleted) {
         // Schedule 15 minutes after the last event
-        nextEventTime = new Date(lastEvent.startDate.getTime() + 15 * 60 * 1000);
-        
+        nextEventTime = new Date(
+          lastEvent.startDate.getTime() + 15 * 60 * 1000,
+        );
+
         // If the calculated time is in the past, schedule for 15 minutes from now
         if (nextEventTime.getTime() <= now.getTime()) {
           nextEventTime = new Date(now.getTime() + 15 * 60 * 1000);
@@ -197,10 +207,10 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         nextEventTime = new Date(now.getTime() + 15 * 60 * 1000);
       }
 
-      const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', { 
-        hour: '2-digit', 
+      const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
+        hour: '2-digit',
         minute: '2-digit',
-        hour12: false 
+        hour12: false,
       })}`;
 
       await this.createEvent(theme, nextEventTime, 5, 2);
@@ -214,20 +224,24 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     try {
       const now = new Date();
       const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
-      
+
       // Find events that start in exactly 2 minutes (±30 seconds) and don't have lobby open yet
-      const eventsToOpen = await this.eventModel.find({
-        isCompleted: false,
-        lobbyOpen: false,
-        startDate: {
-          $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before 2-minute mark
-          $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000)  // 30 seconds after 2-minute mark
-        }
-      }).exec();
+      const eventsToOpen = await this.eventModel
+        .find({
+          isCompleted: false,
+          lobbyOpen: false,
+          startDate: {
+            $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before 2-minute mark
+            $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000), // 30 seconds after 2-minute mark
+          },
+        })
+        .exec();
 
       for (const event of eventsToOpen) {
         await this.openLobby((event._id as any).toString());
-        console.log(`🔓 Auto-opened lobby for event: "${event.theme}" starting at ${event.startDate.toLocaleTimeString()}`);
+        console.log(
+          `🔓 Auto-opened lobby for event: "${event.theme}" starting at ${event.startDate.toLocaleTimeString()}`,
+        );
       }
 
       if (eventsToOpen.length > 0) {
@@ -238,25 +252,30 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
+  async completeEvent(
+    eventId: string,
+    winnerPhone: string,
+  ): Promise<Event | null> {
     console.log(`🏁 Completing event ${eventId} with winner: ${winnerPhone}`);
-    
+
     try {
-      const result = await this.eventModel.findByIdAndUpdate(
-        eventId,
-        { winner: winnerPhone, isCompleted: true },
-        { new: true }
-      ).exec();
-      
+      const result = await this.eventModel
+        .findByIdAndUpdate(
+          eventId,
+          { winner: winnerPhone, isCompleted: true },
+          { new: true },
+        )
+        .exec();
+
       if (result) {
         console.log(`✅ Event completed successfully: ${result.theme}`);
-        
+
         // The event scheduler will automatically create new events
         // so we don't need to manually schedule here
       } else {
         console.log(`❌ Failed to complete event ${eventId}`);
       }
-      
+
       return result;
     } catch (error) {
       console.error('❌ Error completing event:', error);
@@ -264,7 +283,12 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async createEvent(theme: string, startDate: Date, numberOfQuestions: number, minPlayers: number = 2): Promise<Event> {
+  async createEvent(
+    theme: string,
+    startDate: Date,
+    numberOfQuestions: number,
+    minPlayers: number = 2,
+  ): Promise<Event> {
     const event = new this.eventModel({
       theme,
       startDate,
@@ -272,7 +296,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       minPlayers,
       lobbyOpen: false,
       isStarted: false,
-      isCompleted: false
+      isCompleted: false,
     });
     return event.save();
   }
@@ -282,7 +306,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     return this.eventModel
       .findOne({
         isCompleted: false,
-        startDate: { $gt: now }
+        startDate: { $gt: now },
       })
       .sort({ startDate: 1 })
       .exec();
@@ -290,70 +314,76 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
   async openLobby(eventId: string): Promise<Event | null> {
     console.log(`🔓 Opening lobby for event ${eventId}`);
-    const result = await this.eventModel.findByIdAndUpdate(
-      eventId,
-      { lobbyOpen: true },
-      { new: true }
-    ).exec();
-    
+    const result = await this.eventModel
+      .findByIdAndUpdate(eventId, { lobbyOpen: true }, { new: true })
+      .exec();
+
     if (result) {
       console.log(`✅ Lobby opened successfully for: ${result.theme}`);
     } else {
       console.log(`❌ Failed to open lobby for event ${eventId}`);
     }
-    
+
     return result;
   }
 
   async findActiveEvents(): Promise<Event[]> {
-    return this.eventModel.find({ isCompleted: false }).sort({ startDate: 1 }).exec();
+    return this.eventModel
+      .find({ isCompleted: false })
+      .sort({ startDate: 1 })
+      .exec();
   }
 
   async getEventsReadyForLobby(): Promise<Event[]> {
     const now = new Date();
     const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
-    
-    return this.eventModel.find({
-      isCompleted: false,
-      startDate: { 
-        $lte: twoMinutesFromNow,
-        $gt: now
-      },
-      lobbyOpen: false
-    }).sort({ startDate: 1 }).exec();
+
+    return this.eventModel
+      .find({
+        isCompleted: false,
+        startDate: {
+          $lte: twoMinutesFromNow,
+          $gt: now,
+        },
+        lobbyOpen: false,
+      })
+      .sort({ startDate: 1 })
+      .exec();
   }
 
   async startEvent(eventId: string): Promise<Event | null> {
     console.log(`🚀 Starting event ${eventId}`);
-    const result = await this.eventModel.findByIdAndUpdate(
-      eventId,
-      { isStarted: true },
-      { new: true }
-    ).exec();
-    
+    const result = await this.eventModel
+      .findByIdAndUpdate(eventId, { isStarted: true }, { new: true })
+      .exec();
+
     if (result) {
       console.log(`✅ Event started successfully: ${result.theme}`);
     } else {
       console.log(`❌ Failed to start event ${eventId}`);
     }
-    
+
     return result;
   }
 
-  async updateEvent(eventId: string, updates: Partial<Event>): Promise<Event | null> {
-    const result = await this.eventModel.findByIdAndUpdate(
-      eventId,
-      updates,
-      { new: true }
-    ).exec();
+  async updateEvent(
+    eventId: string,
+    updates: Partial<Event>,
+  ): Promise<Event | null> {
+    const result = await this.eventModel
+      .findByIdAndUpdate(eventId, updates, { new: true })
+      .exec();
     return result;
   }
 
   // Utility method to get schedule overview
-  async getScheduleOverview(): Promise<{ upcomingEvents: Event[], nextLobbyOpen: Date | null }> {
+  async getScheduleOverview(): Promise<{
+    upcomingEvents: Event[];
+    nextLobbyOpen: Date | null;
+  }> {
     const upcomingEvents = await this.findActiveEvents();
     const nextEvent = upcomingEvents[0];
-    
+
     let nextLobbyOpen: Date | null = null;
     if (nextEvent && !nextEvent.lobbyOpen) {
       nextLobbyOpen = new Date(nextEvent.startDate.getTime() - 2 * 60 * 1000);
@@ -361,7 +391,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
     return {
       upcomingEvents,
-      nextLobbyOpen
+      nextLobbyOpen,
     };
   }
 }
