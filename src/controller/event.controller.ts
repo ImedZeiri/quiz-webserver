@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, Inject, Put } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Inject,
+  Put,
+} from '@nestjs/common';
 import { EventService } from '../service/event.service';
 import { GatewayService } from '../service/gateway.service';
 import { Event } from '../model/event.entity';
@@ -8,7 +16,7 @@ import type { CreateEventData } from 'src/types/event.interface';
 export class EventController {
   constructor(
     private readonly eventService: EventService,
-    @Inject(GatewayService) private readonly gatewayService: GatewayService
+    @Inject(GatewayService) private readonly gatewayService: GatewayService,
   ) {}
 
   @Get('next')
@@ -27,7 +35,7 @@ export class EventController {
       eventData.theme,
       new Date(eventData.startDate),
       eventData.numberOfQuestions,
-      eventData.minPlayers || 2
+      eventData.minPlayers || 2,
     );
   }
 
@@ -51,7 +59,7 @@ export class EventController {
     await this.gatewayService.forceEventCheck();
     return {
       message: 'Vérification forcée des lobbies effectuée',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
   }
 
@@ -59,34 +67,41 @@ export class EventController {
   async updateEvent(
     @Param('id') id: string,
     @Body()
-    updates: Partial<Pick<Event, 'theme' | 'startDate' | 'numberOfQuestions' | 'minPlayers' | 'lobbyOpen'>>,
+    updates: Partial<
+      Pick<
+        Event,
+        'theme' | 'startDate' | 'numberOfQuestions' | 'minPlayers' | 'lobbyOpen'
+      >
+    >,
   ): Promise<Event | null> {
     const normalized: any = { ...updates };
     if (updates.startDate) {
       normalized.startDate = new Date(updates.startDate as any);
     }
-    
+
     console.log(`📝 Mise à jour de l'événement ${id} avec:`, normalized);
-    
+
     // Les hooks MongoDB se chargeront automatiquement de la notification
     const result = await this.eventService.updateEvent(id, normalized);
-    
+
     // Force une vérification immédiate pour s'assurer que le lobby est mis à jour
     if (result) {
       setTimeout(() => {
         this.gatewayService.forceEventUpdate(id);
       }, 100);
     }
-    
+
     return result;
   }
 
   @Post(':id/force-update')
-  async forceEventUpdate(@Param('id') id: string): Promise<{ message: string; timestamp: string }> {
+  async forceEventUpdate(
+    @Param('id') id: string,
+  ): Promise<{ message: string; timestamp: string }> {
     await this.gatewayService.forceEventUpdate(id);
     return {
-      message: 'Mise à jour forcée de l\'événement effectuée',
-      timestamp: new Date().toISOString()
+      message: "Mise à jour forcée de l'événement effectuée",
+      timestamp: new Date().toISOString(),
     };
   }
 }

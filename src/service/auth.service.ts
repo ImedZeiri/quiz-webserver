@@ -163,12 +163,4 @@ export class AuthService {
     console.log('🔍 Validating refresh token for userId:', userId);
     return bcrypt.compare(token, user.refreshToken);
   }
-
-  /**
-   * Supprime le refresh token de la base (ex: logout)
-   */
-  async removeRefreshToken(userId: string): Promise<void> {
-    console.log('🗑 Removing refresh token for userId:', userId);
-    await this.userModel.findByIdAndUpdate(userId, { refreshToken: null });
-  }
 }
