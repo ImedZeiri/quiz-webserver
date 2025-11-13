@@ -29,6 +29,15 @@ export class GatewayController
 
   handleConnection(client: Socket) {
     console.log(`🔌 Nouvelle connexion WebSocket: ${client.id}`);
+    
+    // Vérifier l'authentification via handshake
+    const token = client.handshake.auth?.token;
+    if (token) {
+      console.log(`🔐 Token détecté dans handshake pour ${client.id}`);
+      // Authentifier immédiatement
+      this.gatewayService.authenticateUser(client.id, token);
+    }
+    
     this.gatewayService.handleConnection(client.id);
     
     // Envoyer immédiatement un événement de confirmation de connexion
@@ -182,5 +191,23 @@ export class GatewayController
       message: 'Test de diffusion effectué, vérifiez les logs serveur',
       timestamp: new Date().toISOString()
     });
+  }
+
+  @SubscribeMessage('requestUserStats')
+  async handleRequestUserStats(client: Socket) {
+    console.log(`📊 Demande explicite des stats utilisateur de ${client.id}`);
+    this.gatewayService.sendUserStatsToClient(client.id);
+  }
+
+  @SubscribeMessage('requestLobbyStatus')
+  async handleRequestLobbyStatus(client: Socket) {
+    console.log(`🏠 Demande explicite du statut lobby de ${client.id}`);
+    this.gatewayService.sendLobbyStatusToClient(client.id);
+  }
+
+  @SubscribeMessage('requestNextEvent')
+  async handleRequestNextEvent(client: Socket) {
+    console.log(`📅 Demande explicite du prochain événement de ${client.id}`);
+    this.gatewayService.sendNextEventToClient(client.id);
   }
 }

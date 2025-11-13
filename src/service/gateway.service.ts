@@ -976,26 +976,10 @@ export class GatewayService implements OnModuleDestroy {
       connectedAt: new Date(),
     });
 
-    // Envoyer immédiatement les stats utilisateur au nouveau client
-    const client = this.server.sockets.sockets.get(clientId);
-    if (client) {
-      const stats = this.getUserStats();
-      client.emit('userStats', stats);
-      console.log(`📊 Stats envoyées au nouveau client ${clientId}:`, stats);
-      
-      // Envoyer le statut du lobby
-      const lobbyStatus = this.getCurrentLobbyStatus();
-      client.emit('lobbyStatus', lobbyStatus);
-      console.log(`🏠 Statut lobby envoyé au nouveau client ${clientId}:`, lobbyStatus);
-      
-      // Envoyer le prochain événement si disponible
-      this.eventService.getNextEvent().then(event => {
-        if (event && !this.currentLobby) {
-          client.emit('nextEvent', this.formatEvent(event));
-          console.log(`📅 Prochain événement envoyé au client ${clientId}:`, event.theme);
-        }
-      });
-    }
+    // Émission automatique des données initiales après connexion
+    setTimeout(() => {
+      this.sendInitialDataToClient(clientId);
+    }, 500); // Petit délai pour s'assurer que le client est prêt
 
     this.checkAndOpenLobbyIfNeeded();
     this.broadcastPlayerStats();
@@ -1407,13 +1391,7 @@ export class GatewayService implements OnModuleDestroy {
         client.emit('userStats', this.getUserStats());
         
         // Envoyer le prochain événement seulement si aucun lobby ouvert ET aucun quiz en cours
-        if (!this.currentLobby && !this.isGlobalQuizActive()) {
-          this.eventService.getNextEvent().then(event => {
-            if (event) {
-              client.emit('nextEvent', this.formatEvent(event));
-            }
-          });
-        }
+        this.sendNextEventIfAllowed(clientId);
         
         // Envoyer le statut du lobby
         this.sendLobbyStatusToClient(clientId);
@@ -1436,13 +1414,7 @@ export class GatewayService implements OnModuleDestroy {
     }
   }
 
-  private sendLobbyStatusToClient(clientId: string) {
-    const client = this.server.sockets.sockets.get(clientId);
-    if (!client) return;
-    
-    const status = this.getCurrentLobbyStatus();
-    client.emit('lobbyStatus', status);
-  }
+
 
   private shouldReceiveEvent(clientId: string, eventName: string): boolean {
     const userSession = this.userSessions.get(clientId);
@@ -1581,6 +1553,11 @@ export class GatewayService implements OnModuleDestroy {
       success: true,
       message: 'Authentification réussie'
     });
+    
+    // Envoyer immédiatement les données après authentification
+    setTimeout(() => {
+      this.sendInitialDataToClient(clientId);
+    }, 100);
     
     this.scheduleStatsBroadcast();
   }
@@ -2024,6 +2001,83 @@ export class GatewayService implements OnModuleDestroy {
   isUserAuthenticated(clientId: string): boolean {
     const session = this.userSessions.get(clientId);
     return session?.isAuthenticated || false;
+  }
+
+  /**
+   * Envoie les données initiales à un client spécifique
+   */
+  private sendInitialDataToClient(clientId: string): void {
+    console.log(`📡 Envoi des données initiales au client ${clientId}`);
+    
+    const client = this.server.sockets.sockets.get(clientId);
+    if (!client) return;
+
+    // Envoyer les stats utilisateur
+    const stats = this.getUserStats();
+    client.emit('userStats', stats);
+    console.log(`📊 Stats envoyées au client ${clientId}:`, stats);
+    
+    // Envoyer le statut du lobby
+    const lobbyStatus = this.getCurrentLobbyStatus();
+    client.emit('lobbyStatus', lobbyStatus);
+    console.log(`🏠 Statut lobby envoyé au client ${clientId}:`, lobbyStatus);
+    
+    // Envoyer le prochain événement si disponible
+    this.sendNextEventIfAllowed(clientId);
+  }
+
+  /**
+   * Envoie les stats utilisateur à un client spécifique
+   */
+  sendUserStatsToClient(clientId: string): void {
+    const client = this.server.sockets.sockets.get(clientId);
+    if (!client) return;
+
+    const stats = this.getUserStats();
+    client.emit('userStats', stats);
+    console.log(`📊 Stats utilisateur envoyées à ${clientId}:`, stats);
+  }
+
+  /**
+   * Envoie le statut du lobby à un client spécifique
+   */
+  sendLobbyStatusToClient(clientId: string): void {
+    const client = this.server.sockets.sockets.get(clientId);
+    if (!client) return;
+    
+    const status = this.getCurrentLobbyStatus();
+    client.emit('lobbyStatus', status);
+    console.log(`🏠 Statut lobby envoyé à ${clientId}:`, status);
+  }
+
+  /**
+   * Envoie le prochain événement à un client spécifique
+   */
+  sendNextEventToClient(clientId: string): void {
+    this.sendNextEventIfAllowed(clientId);
+  }
+
+  /**
+   * Envoie nextEvent seulement si aucun lobby ouvert ET aucun quiz en cours
+   */
+  private sendNextEventIfAllowed(clientId: string): void {
+    const client = this.server.sockets.sockets.get(clientId);
+    if (!client) return;
+
+    // Ne jamais envoyer nextEvent si un lobby est ouvert ou va l'être
+    if (this.currentLobby || this.isGlobalQuizActive()) {
+      console.log(`🚫 nextEvent bloqué pour ${clientId}: lobby=${!!this.currentLobby}, quiz=${this.isGlobalQuizActive()}`);
+      return;
+    }
+
+    this.eventService.getNextEvent().then(event => {
+      if (event) {
+        client.emit('nextEvent', this.formatEvent(event));
+        console.log(`📅 Prochain événement envoyé à ${clientId}:`, event.theme);
+      } else {
+        console.log(`🚫 Aucun prochain événement disponible pour ${clientId}`);
+      }
+    });
   }
 
   /**
