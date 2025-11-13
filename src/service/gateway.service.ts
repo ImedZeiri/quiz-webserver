@@ -186,7 +186,7 @@ export class GatewayService implements OnModuleDestroy {
     const stats = this.getUserStats();
     let sentCount = 0;
     
-    // Envoyer uniquement aux utilisateurs en mode home
+    // Envoyer uniquement aux utilisateurs qui ont userStats activé dans leur contexte
     this.userSessions.forEach((session, clientId) => {
       if (this.shouldReceiveEvent(clientId, 'userStats')) {
         const client = this.server.sockets.sockets.get(clientId);
@@ -196,7 +196,7 @@ export class GatewayService implements OnModuleDestroy {
     });
     
     if (sentCount > 0) {
-      console.log(`📊 Stats utilisateurs envoyées à ${sentCount} clients (mode home):`, stats);
+      console.log(`📊 Stats utilisateurs envoyées à ${sentCount} clients:`, stats);
     }
   }
 
@@ -1328,9 +1328,10 @@ export class GatewayService implements OnModuleDestroy {
           ];
         }
         
-        // Mode multijoueur online/quiz
+        // Mode multijoueur online/quiz - ✅ ENABLE userStats HERE
         const onlineSubscriptions = [
           ...baseSubscriptions,
+          { event: 'userStats', enabled: true },  // ✅ ENABLED in online multiplayer
           { event: 'eventStarted', enabled: true },
           { event: 'eventCompleted', enabled: true },
           { event: 'lobbyJoined', enabled: true },
@@ -1340,8 +1341,7 @@ export class GatewayService implements OnModuleDestroy {
           { event: 'autoStartQuiz', enabled: true },
           { event: 'joinedInProgress', enabled: true },
           { event: 'authenticationConfirmed', enabled: true },
-          // BLOCAGE STRICT : Aucun événement home/solo en mode online
-          { event: 'userStats', enabled: false },
+          // BLOCAGE STRICT : Aucun événement home en mode online
           { event: 'nextEvent', enabled: false },
           { event: 'lobbyOpened', enabled: false },
           { event: 'lobbyStatus', enabled: false },
@@ -1425,6 +1425,9 @@ export class GatewayService implements OnModuleDestroy {
       
       case 'online':
       case 'quiz':
+        // ✅ Envoyer les stats utilisateur IMMÉDIATEMENT en mode online
+        client.emit('userStats', this.getUserStats());
+        
         // Envoyer les stats des joueurs
         client.emit('playerStats', this.getPlayerStats());
         
@@ -1740,8 +1743,6 @@ export class GatewayService implements OnModuleDestroy {
       }
     }
   }
-
-
 
   private isGlobalQuizActive(): boolean {
     return this.globalQuiz?.isActive === true;
