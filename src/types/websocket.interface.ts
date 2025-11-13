@@ -84,4 +84,42 @@ export interface UserSession {
   userType: 'guest' | 'authenticated';
   connectedAt: Date;
   participationMode?: 'play' | 'watch';
+  currentContext?: UserContext;
+  lastActivity?: Date;
+}
+
+export interface UserContext {
+  mode: 'home' | 'solo' | 'online' | 'quiz';
+  isSolo?: boolean;
+  isInLobby?: boolean;
+  isInQuiz?: boolean;
+  subscriptions: ContextSubscription[];
+  lastUpdated?: Date;
+  requiresAuth?: boolean;
+}
+
+export interface ContextSubscription {
+  event: string;
+  enabled: boolean;
+  reason?: string; // Raison pour laquelle l'événement est activé/désactivé
+}
+
+export interface SetContextPayload {
+  mode: 'home' | 'solo' | 'online' | 'quiz';
+  isSolo?: boolean;
+  isInLobby?: boolean;
+  isInQuiz?: boolean;
+}
+
+export interface ContextSetResponse {
+  mode: string;
+  success: boolean;
+  enabledEvents: string[];
+  message?: string;
+}
+
+export interface ContextValidationError {
+  message: string;
+  code: 'INVALID_CONTEXT_PAYLOAD' | 'INVALID_MODE' | 'AUTH_REQUIRED_FOR_ONLINE' | 'SESSION_NOT_FOUND' | 'AUTH_REQUIRED_FOR_MULTIPLAYER';
+  requiredAction?: 'LOGIN' | 'RECONNECT';
 }
