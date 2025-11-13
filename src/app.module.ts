@@ -20,6 +20,11 @@ import { UsersService } from './service/users.service';
 import { User, UserSchema } from './model/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 
+// Déclaration globale pour TypeScript
+declare global {
+  var gatewayService: any;
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
@@ -65,4 +70,9 @@ import { JwtModule } from '@nestjs/jwt';
     UsersService,
   ],
 })
-export class AppModule {}
+export class AppModule {
+  constructor(private readonly gatewayService: GatewayService) {
+    // Exposer le service gateway globalement pour les hooks MongoDB
+    global.gatewayService = this.gatewayService;
+  }
+}

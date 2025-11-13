@@ -25,7 +25,19 @@ interface UserSession {
   isAuthenticated: boolean;
   userType: 'authenticated' | 'guest';
   connectedAt: Date;
+  lastActivity?: Date;
+  currentContext?: {
+    mode: 'home' | 'solo' | 'online' | 'quiz';
+    isSolo?: boolean;
+    isInLobby?: boolean;
+    isInQuiz?: boolean;
+    subscriptions: { event: string; enabled: boolean; }[];
+    lastUpdated?: Date;
+    requiresAuth?: boolean;
+  };
 }
+
+type UserContext = UserSession['currentContext'];
 
 @Injectable()
 export class GatewayService implements OnModuleDestroy {
@@ -38,7 +50,9 @@ export class GatewayService implements OnModuleDestroy {
   private eventCheckInterval?: NodeJS.Timeout;
   private nextEventTimer?: NodeJS.Timeout;
   private statsUpdateInterval?: NodeJS.Timeout;
+  private lobbyStatusInterval?: NodeJS.Timeout;
   private statsPendingBroadcast = false;
+  private lastLobbyStatus: any = null;
 
   private server: Server;
 
@@ -84,7 +98,7 @@ export class GatewayService implements OnModuleDestroy {
         const now = Date.now();
         const eventTime = new Date(event.startDate).getTime();
         const lobbyTime = eventTime - 5 * 60 * 1000;
-        const endTime = eventTime;
+        const endTime = eventTime + 2 * 60 * 1000;
         if (now >= lobbyTime && now <= endTime) {
           console.log(`🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`);
           await this.openEventLobby(event);
@@ -92,6 +106,11 @@ export class GatewayService implements OnModuleDestroy {
         }
       }
     }, 10000);
+
+    // Automatic lobby status broadcaster - every 20 seconds
+    this.lobbyStatusInterval = setInterval(() => {
+      this.checkAndBroadcastLobbyStatus();
+    }, 20000);
   }
 
   private startStatsScheduler() {
@@ -118,7 +137,21 @@ export class GatewayService implements OnModuleDestroy {
   }
 
   private broadcastPlayerStats() {
-    this.server.emit('playerStats', this.getPlayerStats());
+    const stats = this.getPlayerStats();
+    let sentCount = 0;
+    
+    // Envoyer uniquement aux utilisateurs en mode quiz/online
+    this.userSessions.forEach((session, clientId) => {
+      if (this.shouldReceiveEvent(clientId, 'playerStats')) {
+        const client = this.server.sockets.sockets.get(clientId);
+        client?.emit('playerStats', stats);
+        sentCount++;
+      }
+    });
+    
+    if (sentCount > 0) {
+      console.log(`📊 Stats joueurs envoyées à ${sentCount} clients:`, stats);
+    }
   }
 
   private getUserStats() {
@@ -151,8 +184,20 @@ export class GatewayService implements OnModuleDestroy {
 
   private broadcastUserStats() {
     const stats = this.getUserStats();
-    console.log('📊 STATS UTILISATEURS:', stats);
-    this.server.emit('userStats', stats);
+    let sentCount = 0;
+    
+    // Envoyer uniquement aux utilisateurs en mode home
+    this.userSessions.forEach((session, clientId) => {
+      if (this.shouldReceiveEvent(clientId, 'userStats')) {
+        const client = this.server.sockets.sockets.get(clientId);
+        client?.emit('userStats', stats);
+        sentCount++;
+      }
+    });
+    
+    if (sentCount > 0) {
+      console.log(`📊 Stats utilisateurs envoyées à ${sentCount} clients (mode home):`, stats);
+    }
   }
 
   // ======================
@@ -175,17 +220,24 @@ export class GatewayService implements OnModuleDestroy {
 
     this.startEventCountdown();
 
-    this.server.emit('lobbyOpened', {
-      event: {
-        id: event.id,
-        theme: event.theme || 'Questions Aléatoires',
-        numberOfQuestions: event.numberOfQuestions,
-        startDate: event.startDate,
-        minPlayers: event.minPlayers,
-      },
+    // Envoyer uniquement aux utilisateurs en mode home
+    this.userSessions.forEach((session, clientId) => {
+      if (this.shouldReceiveEvent(clientId, 'lobbyOpened')) {
+        const client = this.server.sockets.sockets.get(clientId);
+        client?.emit('lobbyOpened', {
+          event: {
+            id: event.id,
+            theme: event.theme || 'Questions Aléatoires',
+            numberOfQuestions: event.numberOfQuestions,
+            startDate: event.startDate,
+            minPlayers: event.minPlayers,
+          },
+        });
+      }
     });
 
-    this.server.emit('lobbyStatus', { isOpen: true, event });
+    // Trigger immediate status broadcast
+    this.checkAndBroadcastLobbyStatus();
   }
 
   private startEventCountdown() {
@@ -197,10 +249,16 @@ export class GatewayService implements OnModuleDestroy {
       const eventTime = new Date(this.currentLobby.event.startDate).getTime();
       const timeLeft = Math.max(0, Math.floor((eventTime - now) / 1000));
 
-      this.server.emit('eventCountdown', {
-        timeLeft,
-        participants: this.currentLobby.participants.size,
-        minPlayers: this.currentLobby.event.minPlayers,
+      // Envoyer le countdown uniquement aux utilisateurs en mode home
+      this.userSessions.forEach((session, clientId) => {
+        if (this.shouldReceiveEvent(clientId, 'eventCountdown')) {
+          const client = this.server.sockets.sockets.get(clientId);
+          client?.emit('eventCountdown', {
+            timeLeft,
+            participants: this.currentLobby?.participants.size || 0,
+            minPlayers: this.currentLobby?.event.minPlayers || 0,
+          });
+        }
       });
 
       if (timeLeft <= 0) this.startEventIfReady();
@@ -222,10 +280,16 @@ export class GatewayService implements OnModuleDestroy {
       const lobbyParticipants = new Set(participants);
       await this.startEventQuiz(event, lobbyParticipants);
     } else {
-      this.server.emit('eventCancelled', {
-        reason: 'Aucun joueur présent',
-        required: event.minPlayers,
-        actual: participants.size,
+      // Envoyer l'annulation d'événement aux utilisateurs en mode quiz
+      this.userSessions.forEach((session, clientId) => {
+        if (this.shouldReceiveEvent(clientId, 'eventCancelled')) {
+          const client = this.server.sockets.sockets.get(clientId);
+          client?.emit('eventCancelled', {
+            reason: 'Aucun joueur présent',
+            required: event.minPlayers,
+            actual: participants.size,
+          });
+        }
       });
     }
 
@@ -234,23 +298,46 @@ export class GatewayService implements OnModuleDestroy {
   }
 
   joinLobby(clientId: string) {
-    if (!this.currentLobby) {
+    // Permettre de rejoindre même si un quiz est en cours (pas encore terminé)
+    if (!this.currentLobby && !this.isGlobalQuizActive()) {
       const client = this.server.sockets.sockets.get(clientId);
       client?.emit('error', { message: 'Aucun lobby ouvert actuellement' });
       return;
     }
 
-    const wasAlreadyInLobby = this.currentLobby.participants.has(clientId);
-    this.currentLobby.participants.add(clientId);
+    // Si un quiz est en cours, rejoindre automatiquement
+    if (this.isGlobalQuizActive() && !this.currentLobby) {
+      this.joinOngoingEvent(clientId);
+      return;
+    }
 
-    console.log(`Joueur ${clientId} ${wasAlreadyInLobby ? 'déjà dans' : 'a rejoint'} le lobby. Total: ${this.currentLobby.participants.size}`);
-    this.broadcastLobbyUpdate();
+    const wasAlreadyInLobby = this.currentLobby!.participants.has(clientId);
+    this.currentLobby!.participants.add(clientId);
 
+    console.log(`Joueur ${clientId} ${wasAlreadyInLobby ? 'déjà dans' : 'a rejoint'} le lobby. Total: ${this.currentLobby!.participants.size}`);
+    
     const client = this.server.sockets.sockets.get(clientId);
+    
+    // Envoyer les infos du lobby au client qui vient de rejoindre
     client?.emit('lobbyJoined', {
-      event: this.currentLobby.event,
-      participants: this.currentLobby.participants.size,
+      event: this.currentLobby!.event,
+      participants: this.currentLobby!.participants.size,
+      minPlayers: this.currentLobby!.event.minPlayers
     });
+    
+    // Calculer et envoyer le countdown actuel
+    const now = Date.now();
+    const eventTime = new Date(this.currentLobby!.event.startDate).getTime();
+    const timeLeft = Math.max(0, Math.floor((eventTime - now) / 1000));
+    
+    client?.emit('eventCountdown', {
+      timeLeft,
+      participants: this.currentLobby!.participants.size,
+      minPlayers: this.currentLobby!.event.minPlayers
+    });
+    
+    // Diffuser la mise à jour à tous les autres participants
+    this.broadcastLobbyUpdate();
   }
 
   leaveLobby(clientId: string) {
@@ -274,9 +361,16 @@ export class GatewayService implements OnModuleDestroy {
 
   private broadcastLobbyUpdate() {
     if (!this.currentLobby) return;
-    this.server.emit('lobbyUpdate', {
-      participants: this.currentLobby.participants.size,
-      minPlayers: this.currentLobby.event.minPlayers,
+    
+    // Envoyer les mises à jour du lobby aux utilisateurs en mode home et quiz
+    this.userSessions.forEach((session, clientId) => {
+      if (this.shouldReceiveEvent(clientId, 'lobbyUpdate')) {
+        const client = this.server.sockets.sockets.get(clientId);
+        client?.emit('lobbyUpdate', {
+          participants: this.currentLobby?.participants.size || 0,
+          minPlayers: this.currentLobby?.event.minPlayers || 0,
+        });
+      }
     });
   }
 
@@ -288,7 +382,7 @@ export class GatewayService implements OnModuleDestroy {
     console.log(`🔄 Événement modifié détecté: ${updatedEvent.theme}`);
     const now = new Date().getTime();
     const eventTime = new Date(updatedEvent.startDate).getTime();
-    const maxWindow = eventTime;
+    const maxWindow = eventTime + 2 * 60 * 1000;
   
     if (now > maxWindow && !updatedEvent.isCompleted) {
       console.log(
@@ -312,7 +406,7 @@ export class GatewayService implements OnModuleDestroy {
   
       const newEventTime = new Date(updatedEvent.startDate).getTime();
       const newLobbyTime = newEventTime - 5 * 60 * 1000;
-      const newEndTime = newEventTime;
+      const newEndTime = newEventTime + 2 * 60 * 1000;
   
       if (now >= newLobbyTime && now <= newEndTime) {
         this.currentLobby = {
@@ -337,10 +431,16 @@ export class GatewayService implements OnModuleDestroy {
         });
         this.server.emit('lobbyStatus', { isOpen: true, event: updatedEvent });
         const timeLeft = Math.max(0, Math.floor((newEventTime - now) / 1000));
-        this.server.emit('eventCountdown', {
-          timeLeft,
-          participants: currentParticipants.size,
-          minPlayers: updatedEvent.minPlayers,
+        // Envoyer le countdown uniquement aux utilisateurs en mode home
+        this.userSessions.forEach((session, clientId) => {
+          if (this.shouldReceiveEvent(clientId, 'eventCountdown')) {
+            const client = this.server.sockets.sockets.get(clientId);
+            client?.emit('eventCountdown', {
+              timeLeft,
+              participants: currentParticipants.size,
+              minPlayers: updatedEvent.minPlayers,
+            });
+          }
         });
         console.log(
           `✅ NOUVEAU lobby créé avec ${currentParticipants.size} participants`,
@@ -351,7 +451,7 @@ export class GatewayService implements OnModuleDestroy {
     } else if (!this.currentLobby && !this.isGlobalQuizActive()) {
       const newEventTime = new Date(updatedEvent.startDate).getTime();
       const newLobbyTime = newEventTime - 5 * 60 * 1000;
-      const newEndTime = newEventTime;
+      const newEndTime = newEventTime + 2 * 60 * 1000;
       if (now >= newLobbyTime && now <= newEndTime) {
         console.log(`🚀 Ouverture d'un nouveau lobby suite à la modification`);
         await this.openEventLobby(updatedEvent);
@@ -386,7 +486,15 @@ export class GatewayService implements OnModuleDestroy {
   }
 
   private broadcastNextEvent(event: Event) {
-    this.server.emit('nextEvent', this.formatEvent(event));
+    // Envoyer le prochain événement uniquement si aucun lobby ouvert ET aucun quiz en cours
+    if (!this.currentLobby && !this.isGlobalQuizActive()) {
+      this.userSessions.forEach((session, clientId) => {
+        if (this.shouldReceiveEvent(clientId, 'nextEvent')) {
+          const client = this.server.sockets.sockets.get(clientId);
+          client?.emit('nextEvent', this.formatEvent(event));
+        }
+      });
+    }
   }
 
   private async initializeNextEvent() {
@@ -398,7 +506,7 @@ export class GatewayService implements OnModuleDestroy {
     const now = Date.now();
     const eventTime = new Date(event.startDate).getTime();
     const lobbyTime = eventTime - 5 * 60 * 1000;
-    const endTime = eventTime;
+    const endTime = eventTime + 2 * 60 * 1000;
 
     if (now >= lobbyTime && !event.lobbyOpen && now <= endTime) {
       this.openEventLobby(event);
@@ -416,7 +524,7 @@ export class GatewayService implements OnModuleDestroy {
       const now = Date.now();
       const eventTime = new Date(event.startDate).getTime();
       const lobbyTime = eventTime - 5 * 60 * 1000;
-      const endTime = eventTime;
+      const endTime = eventTime + 2 * 60 * 1000;
       if (now >= lobbyTime && now <= endTime) {
         await this.openEventLobby(event);
         break;
@@ -440,6 +548,7 @@ export class GatewayService implements OnModuleDestroy {
       participants: new Map(),
     };
 
+    // Créer les sessions UNIQUEMENT pour les participants du lobby
     for (const clientId of participants) {
       this.globalQuiz.participants.set(clientId, { clientId, score: 0, answers: [] });
       const session: QuizSession = {
@@ -456,14 +565,18 @@ export class GatewayService implements OnModuleDestroy {
       this.updateUserParticipation(clientId, true, 'play');
     }
 
-    this.server.emit('eventStarted', { event: this.formatEvent(event) });
+    // Envoyer eventStarted UNIQUEMENT aux participants authentifiés
     for (const clientId of participants) {
-      const client = this.server.sockets.sockets.get(clientId);
-      client?.emit('autoStartQuiz', {
-        theme: event.theme,
-        limit: event.numberOfQuestions,
-        timeLimit: 30,
-      });
+      const userSession = this.userSessions.get(clientId);
+      if (userSession?.isAuthenticated) {
+        const client = this.server.sockets.sockets.get(clientId);
+        client?.emit('eventStarted', { event: this.formatEvent(event) });
+        client?.emit('autoStartQuiz', {
+          theme: event.theme,
+          limit: event.numberOfQuestions,
+          timeLimit: 30,
+        });
+      }
     }
 
     this.startGlobalQuiz();
@@ -479,9 +592,15 @@ export class GatewayService implements OnModuleDestroy {
       quiz.timerInterval = setInterval(() => {
         if (!this.globalQuiz) return;
         this.globalQuiz.timeLeft--;
-        this.server.emit('timerUpdate', {
-          timeLeft: this.globalQuiz.timeLeft,
-          ...this.getPlayerStats(),
+        // Envoyer les mises à jour du timer aux utilisateurs en mode quiz
+        this.userSessions.forEach((session, clientId) => {
+          if (this.shouldReceiveEvent(clientId, 'timerUpdate')) {
+            const client = this.server.sockets.sockets.get(clientId);
+            client?.emit('timerUpdate', {
+              timeLeft: this.globalQuiz?.timeLeft || 0,
+              ...this.getPlayerStats(),
+            });
+          }
         });
         if (this.globalQuiz.timeLeft <= 0) {
           this.handleGlobalTimeExpired();
@@ -499,7 +618,11 @@ export class GatewayService implements OnModuleDestroy {
   
     const { currentQuestionIndex, timeLeft } = this.globalQuiz;
   
+    // Envoyer les questions UNIQUEMENT aux participants du lobby
     this.quizSessions.forEach((session, clientId) => {
+      // Vérifier que le client était dans le lobby au moment du démarrage
+      if (!this.globalQuiz?.participants.has(clientId)) return;
+      
       const client = this.server.sockets.sockets.get(clientId);
       if (!client) return;
   
@@ -685,11 +808,17 @@ export class GatewayService implements OnModuleDestroy {
           await this.eventService.completeEvent(this.globalQuiz.event.id, winnerSessionId);
         }
 
-        this.server.emit('eventCompleted', {
-          eventId: this.globalQuiz.event.id,
-          winner: winnerUsername || winnerSessionId,
-          winnerPhone,
-          winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${winnerSessionId}`,
+        // Envoyer l'événement terminé aux utilisateurs en mode quiz
+        this.userSessions.forEach((session, clientId) => {
+          if (this.shouldReceiveEvent(clientId, 'eventCompleted')) {
+            const client = this.server.sockets.sockets.get(clientId);
+            client?.emit('eventCompleted', {
+              eventId: this.globalQuiz?.event?.id || '',
+              winner: winnerUsername || winnerSessionId,
+              winnerPhone,
+              winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${winnerSessionId}`,
+            });
+          }
         });
       }
     }
@@ -718,19 +847,37 @@ export class GatewayService implements OnModuleDestroy {
     if (!this.globalQuiz) return;
     console.log('📺 Démarrage de la pause publicitaire avant la dernière question');
 
-    this.server.emit('adBreakStarted', {
-      duration: 15,
-      message: 'Pause publicitaire avant la dernière question',
-      isFinalQuestion: true,
+    // Envoyer la pause publicitaire aux utilisateurs en mode quiz
+    this.userSessions.forEach((session, clientId) => {
+      if (this.shouldReceiveEvent(clientId, 'adBreakStarted')) {
+        const client = this.server.sockets.sockets.get(clientId);
+        client?.emit('adBreakStarted', {
+          duration: 15,
+          message: 'Pause publicitaire avant la dernière question',
+          isFinalQuestion: true,
+        });
+      }
     });
 
     let countdown = 15;
     const adCountdownInterval = setInterval(() => {
       countdown--;
-      this.server.emit('adBreakCountdown', { timeLeft: countdown });
+      // Envoyer le countdown de la pause publicitaire aux utilisateurs en mode quiz
+      this.userSessions.forEach((session, clientId) => {
+        if (this.shouldReceiveEvent(clientId, 'adBreakCountdown')) {
+          const client = this.server.sockets.sockets.get(clientId);
+          client?.emit('adBreakCountdown', { timeLeft: countdown });
+        }
+      });
       if (countdown <= 0) {
         clearInterval(adCountdownInterval);
-        this.server.emit('adBreakEnded');
+        // Envoyer la fin de la pause publicitaire aux utilisateurs en mode quiz
+        this.userSessions.forEach((session, clientId) => {
+          if (this.shouldReceiveEvent(clientId, 'adBreakEnded')) {
+            const client = this.server.sockets.sockets.get(clientId);
+            client?.emit('adBreakEnded');
+          }
+        });
         this.globalQuiz!.timeLeft = this.globalQuiz!.timeLimit;
         this.startGlobalQuiz();
       }
@@ -775,12 +922,18 @@ export class GatewayService implements OnModuleDestroy {
         await this.eventService.completeEvent(this.globalQuiz.event.id, clientId);
       }
 
-      this.server.emit('immediateWinner', {
-        eventId: this.globalQuiz.event.id,
-        winner: winnerUsername || clientId,
-        winnerPhone,
-        winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${clientId}`,
-        message: 'Première réponse correcte sur la dernière question !',
+      // Envoyer le gagnant immédiat aux utilisateurs en mode quiz
+      this.userSessions.forEach((session, sessionClientId) => {
+        if (this.shouldReceiveEvent(sessionClientId, 'immediateWinner')) {
+          const client = this.server.sockets.sockets.get(sessionClientId);
+          client?.emit('immediateWinner', {
+            eventId: this.globalQuiz?.event?.id || '',
+            winner: winnerUsername || clientId,
+            winnerPhone,
+            winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${clientId}`,
+            message: 'Première réponse correcte sur la dernière question !',
+          });
+        }
       });
     }
 
@@ -810,7 +963,9 @@ export class GatewayService implements OnModuleDestroy {
   // ======================
 
   handleConnection(clientId: string) {
-    console.log(`Client connected: ${clientId}`);
+    console.log(`🔌 Client connected: ${clientId}`);
+    
+    // Créer la session utilisateur
     this.userSessions.set(clientId, {
       socketId: clientId,
       token: '',
@@ -821,12 +976,28 @@ export class GatewayService implements OnModuleDestroy {
       connectedAt: new Date(),
     });
 
-    this.checkAndOpenLobbyIfNeeded();
-    this.sendNextEventInfo(clientId);
-    if (this.currentLobby) {
-      this.sendLobbyInfo(clientId);
-      this.sendEventCountdown(clientId);
+    // Envoyer immédiatement les stats utilisateur au nouveau client
+    const client = this.server.sockets.sockets.get(clientId);
+    if (client) {
+      const stats = this.getUserStats();
+      client.emit('userStats', stats);
+      console.log(`📊 Stats envoyées au nouveau client ${clientId}:`, stats);
+      
+      // Envoyer le statut du lobby
+      const lobbyStatus = this.getCurrentLobbyStatus();
+      client.emit('lobbyStatus', lobbyStatus);
+      console.log(`🏠 Statut lobby envoyé au nouveau client ${clientId}:`, lobbyStatus);
+      
+      // Envoyer le prochain événement si disponible
+      this.eventService.getNextEvent().then(event => {
+        if (event && !this.currentLobby) {
+          client.emit('nextEvent', this.formatEvent(event));
+          console.log(`📅 Prochain événement envoyé au client ${clientId}:`, event.theme);
+        }
+      });
     }
+
+    this.checkAndOpenLobbyIfNeeded();
     this.broadcastPlayerStats();
     this.scheduleStatsBroadcast();
   }
@@ -876,6 +1047,7 @@ export class GatewayService implements OnModuleDestroy {
     if (this.eventCheckInterval) clearInterval(this.eventCheckInterval);
     if (this.nextEventTimer) clearTimeout(this.nextEventTimer);
     if (this.statsUpdateInterval) clearInterval(this.statsUpdateInterval);
+    if (this.lobbyStatusInterval) clearInterval(this.lobbyStatusInterval);
   }
 
   private destroyCurrentLobby(reason: string = 'Lobby détruit') {
@@ -888,7 +1060,432 @@ export class GatewayService implements OnModuleDestroy {
     this.currentLobby = null;
 
     this.server.emit('lobbyClosed', { reason, eventId });
-    this.server.emit('lobbyStatus', { isOpen: false, event: null });
+    // Trigger immediate status broadcast
+    this.checkAndBroadcastLobbyStatus();
+  }
+
+  // ======================
+  // CONTEXT MANAGEMENT
+  // ======================
+
+  setUserContext(clientId: string, payload: { mode: string; isSolo?: boolean; isInLobby?: boolean; isInQuiz?: boolean }) {
+    const userSession = this.userSessions.get(clientId);
+    if (!userSession) {
+      console.warn(`Tentative de définir le contexte pour un utilisateur inexistant: ${clientId}`);
+      const client = this.server.sockets.sockets.get(clientId);
+      client?.emit('error', { 
+        message: 'Session utilisateur non trouvée. Veuillez vous reconnecter.',
+        code: 'SESSION_NOT_FOUND',
+        requiredAction: 'RECONNECT'
+      });
+      return;
+    }
+
+    // Validation stricte de l'authentification selon le mode
+    const authValidation = this.validateAuthenticationForMode(payload.mode as any, payload, userSession);
+    if (!authValidation.isValid) {
+      console.warn(`⚠️ Accès refusé pour ${clientId}: ${authValidation.reason}`);
+      const client = this.server.sockets.sockets.get(clientId);
+      client?.emit('error', authValidation.error);
+      return;
+    }
+
+    // Nettoyer le contexte précédent si nécessaire
+    if (userSession.currentContext) {
+      console.log(`🔄 Changement de contexte pour ${clientId}: ${userSession.currentContext.mode} → ${payload.mode}`);
+      this.cleanupPreviousContext(clientId, userSession.currentContext);
+    }
+
+    const contextSubscriptions = this.getContextSubscriptions(payload.mode as any, payload);
+    
+    userSession.currentContext = {
+      mode: payload.mode as any,
+      isSolo: payload.isSolo,
+      isInLobby: payload.isInLobby,
+      isInQuiz: payload.isInQuiz,
+      subscriptions: contextSubscriptions,
+      lastUpdated: new Date(),
+      requiresAuth: this.doesModeRequireAuth(payload.mode as any, payload)
+    };
+    
+    userSession.lastActivity = new Date();
+
+    const enabledEvents = contextSubscriptions.filter(s => s.enabled).map(s => s.event);
+    const disabledEvents = contextSubscriptions.filter(s => !s.enabled).map(s => s.event);
+    
+    console.log(`📍 Contexte défini pour ${clientId}: ${payload.mode}`, {
+      isSolo: payload.isSolo,
+      isInLobby: payload.isInLobby,
+      isInQuiz: payload.isInQuiz,
+      isAuthenticated: userSession.isAuthenticated,
+      userType: userSession.userType,
+      enabledEvents: enabledEvents,
+      disabledEvents: disabledEvents
+    });
+    
+    // Log détaillé pour le debugging
+    console.log(`✅ Événements ACTIVÉS pour ${payload.mode}: [${enabledEvents.join(', ')}]`);
+    console.log(`❌ Événements DÉSACTIVÉS pour ${payload.mode}: [${disabledEvents.join(', ')}]`);
+
+    // Envoyer immédiatement les données pertinentes selon le contexte
+    this.sendContextualData(clientId, userSession.currentContext);
+    
+    // Confirmer le changement de contexte au client
+    const client = this.server.sockets.sockets.get(clientId);
+    client?.emit('contextSet', {
+      mode: payload.mode,
+      success: true,
+      enabledEvents: contextSubscriptions.filter(s => s.enabled).map(s => s.event)
+    });
+  }
+
+  /**
+   * Valide si l'utilisateur peut accéder au mode demandé selon son statut d'authentification
+   */
+  private validateAuthenticationForMode(
+    mode: 'home' | 'solo' | 'online' | 'quiz', 
+    payload: any, 
+    userSession: UserSession
+  ): { isValid: boolean; reason?: string; error?: any } {
+    // Mode home : toujours accessible
+    if (mode === 'home') {
+      return { isValid: true };
+    }
+
+    // Mode solo : toujours accessible (pas d'authentification requise)
+    if (mode === 'solo' && payload.isSolo === true) {
+      return { isValid: true };
+    }
+
+    // Mode online : authentification obligatoire
+    if (mode === 'online' && !userSession.isAuthenticated) {
+      return {
+        isValid: false,
+        reason: 'Mode online nécessite une authentification',
+        error: {
+          message: 'Le mode en ligne nécessite une authentification. Veuillez vous connecter.',
+          code: 'AUTH_REQUIRED_FOR_ONLINE',
+          requiredAction: 'LOGIN'
+        }
+      };
+    }
+
+    // Mode quiz : authentification obligatoire pour le multijoueur
+    if (mode === 'quiz') {
+      // Quiz solo : pas d'authentification requise
+      if (payload.isSolo === true) {
+        return { isValid: true };
+      }
+      
+      // Quiz multijoueur : authentification obligatoire
+      if (!userSession.isAuthenticated) {
+        return {
+          isValid: false,
+          reason: 'Quiz multijoueur nécessite une authentification',
+          error: {
+            message: 'Le quiz multijoueur nécessite une authentification. Veuillez vous connecter.',
+            code: 'AUTH_REQUIRED_FOR_MULTIPLAYER',
+            requiredAction: 'LOGIN'
+          }
+        };
+      }
+    }
+
+    return { isValid: true };
+  }
+
+  /**
+   * Détermine si un mode nécessite une authentification
+   */
+  private doesModeRequireAuth(mode: 'home' | 'solo' | 'online' | 'quiz', payload: any): boolean {
+    if (mode === 'home') return false;
+    if (mode === 'solo' && payload.isSolo === true) return false;
+    if (mode === 'online') return true;
+    if (mode === 'quiz' && !payload.isSolo) return true;
+    return false;
+  }
+
+  /**
+   * Nettoie les ressources du contexte précédent
+   */
+  private cleanupPreviousContext(clientId: string, previousContext: NonNullable<UserContext>): void {
+    // Nettoyer les abonnements spécifiques au contexte précédent
+    if (previousContext.mode === 'quiz' && previousContext.isInQuiz) {
+      // Retirer de la session de quiz si nécessaire
+      const session = this.quizSessions.get(clientId);
+      if (session && !this.isGlobalQuizActive()) {
+        this.quizSessions.delete(clientId);
+      }
+    }
+    
+    if (previousContext.mode === 'online' && previousContext.isInLobby) {
+      // Retirer du lobby si nécessaire
+      if (this.currentLobby?.participants.has(clientId)) {
+        this.currentLobby.participants.delete(clientId);
+        this.broadcastLobbyUpdate();
+      }
+    }
+    
+    console.log(`🧹 Contexte précédent nettoyé pour ${clientId}: ${previousContext.mode}`);
+  }
+
+  private getContextSubscriptions(mode: 'home' | 'solo' | 'online' | 'quiz', payload: any): { event: string; enabled: boolean; }[] {
+    const baseSubscriptions = [
+      { event: 'connectionStatus', enabled: true },
+      { event: 'error', enabled: true },
+      { event: 'forceLogout', enabled: true }
+    ];
+
+    switch (mode) {
+      case 'home':
+        return [
+          ...baseSubscriptions,
+          { event: 'userStats', enabled: true },
+          { event: 'nextEvent', enabled: true },
+          { event: 'lobbyOpened', enabled: true },
+          { event: 'lobbyStatus', enabled: true },
+          { event: 'eventCountdown', enabled: true },
+          { event: 'lobbyClosed', enabled: true },
+          { event: 'eventUpdated', enabled: true },
+          { event: 'eventDeleted', enabled: true },
+          { event: 'eventExpired', enabled: true },
+          { event: 'authenticationConfirmed', enabled: true },
+          // BLOCAGE STRICT : Aucun événement de jeu en mode home
+          { event: 'soloQuestions', enabled: false },
+          { event: 'quizQuestion', enabled: false },
+          { event: 'timerUpdate', enabled: false },
+          { event: 'answerQueued', enabled: false },
+          { event: 'playerStats', enabled: false },
+          { event: 'quizCompleted', enabled: false },
+          { event: 'eventStarted', enabled: false },
+          { event: 'eventCompleted', enabled: false },
+          { event: 'autoStartQuiz', enabled: false },
+          { event: 'adBreakStarted', enabled: false },
+          { event: 'adBreakCountdown', enabled: false },
+          { event: 'adBreakEnded', enabled: false },
+          { event: 'immediateWinner', enabled: false },
+          { event: 'answerResult', enabled: false }
+        ];
+      
+      case 'solo':
+        return [
+          ...baseSubscriptions,
+          { event: 'soloQuestions', enabled: true },
+          // BLOCAGE STRICT : Aucun événement multijoueur en mode solo
+          { event: 'userStats', enabled: false },
+          { event: 'nextEvent', enabled: false },
+          { event: 'lobbyOpened', enabled: false },
+          { event: 'lobbyStatus', enabled: false },
+          { event: 'eventCountdown', enabled: false },
+          { event: 'lobbyClosed', enabled: false },
+          { event: 'eventUpdated', enabled: false },
+          { event: 'eventDeleted', enabled: false },
+          { event: 'eventExpired', enabled: false },
+          { event: 'quizQuestion', enabled: false },
+          { event: 'quizCompleted', enabled: false },
+          { event: 'timerUpdate', enabled: false },
+          { event: 'answerQueued', enabled: false },
+          { event: 'playerStats', enabled: false },
+          { event: 'eventStarted', enabled: false },
+          { event: 'eventCompleted', enabled: false },
+          { event: 'lobbyJoined', enabled: false },
+          { event: 'lobbyUpdate', enabled: false },
+          { event: 'lobbyLeft', enabled: false },
+          { event: 'eventCancelled', enabled: false },
+          { event: 'autoStartQuiz', enabled: false },
+          { event: 'joinedInProgress', enabled: false },
+          { event: 'adBreakStarted', enabled: false },
+          { event: 'adBreakCountdown', enabled: false },
+          { event: 'adBreakEnded', enabled: false },
+          { event: 'immediateWinner', enabled: false },
+          { event: 'answerResult', enabled: false },
+          { event: 'authenticationConfirmed', enabled: false }
+        ];
+      
+      case 'online':
+      case 'quiz':
+        const isInLobby = payload.isInLobby;
+        const isInQuiz = payload.isInQuiz;
+        const isSolo = payload.isSolo;
+        
+        // Si c'est un quiz solo, traiter comme le mode solo
+        if (isSolo === true) {
+          return [
+            ...baseSubscriptions,
+            { event: 'soloQuestions', enabled: true },
+            // BLOCAGE STRICT pour quiz solo
+            { event: 'userStats', enabled: false },
+            { event: 'nextEvent', enabled: false },
+            { event: 'lobbyOpened', enabled: false },
+            { event: 'lobbyStatus', enabled: false },
+            { event: 'eventCountdown', enabled: false },
+            { event: 'playerStats', enabled: false },
+            { event: 'quizQuestion', enabled: false },
+            { event: 'timerUpdate', enabled: false },
+            { event: 'eventStarted', enabled: false },
+            { event: 'eventCompleted', enabled: false },
+            { event: 'authenticationConfirmed', enabled: false }
+          ];
+        }
+        
+        // Mode multijoueur online/quiz
+        const onlineSubscriptions = [
+          ...baseSubscriptions,
+          { event: 'eventStarted', enabled: true },
+          { event: 'eventCompleted', enabled: true },
+          { event: 'lobbyJoined', enabled: true },
+          { event: 'lobbyUpdate', enabled: true },
+          { event: 'lobbyLeft', enabled: true },
+          { event: 'eventCancelled', enabled: true },
+          { event: 'autoStartQuiz', enabled: true },
+          { event: 'joinedInProgress', enabled: true },
+          { event: 'authenticationConfirmed', enabled: true },
+          // BLOCAGE STRICT : Aucun événement home/solo en mode online
+          { event: 'userStats', enabled: false },
+          { event: 'nextEvent', enabled: false },
+          { event: 'lobbyOpened', enabled: false },
+          { event: 'lobbyStatus', enabled: false },
+          { event: 'soloQuestions', enabled: false }
+        ];
+        
+        // Activer les événements de lobby seulement si dans le lobby
+        if (isInLobby) {
+          onlineSubscriptions.push(
+            { event: 'eventCountdown', enabled: true },
+            { event: 'lobbyClosed', enabled: true }
+          );
+        } else {
+          onlineSubscriptions.push(
+            { event: 'eventCountdown', enabled: false },
+            { event: 'lobbyClosed', enabled: false }
+          );
+        }
+        
+        // Activer les événements de quiz seulement si dans le quiz
+        if (isInQuiz) {
+          onlineSubscriptions.push(
+            { event: 'quizQuestion', enabled: true },
+            { event: 'quizCompleted', enabled: true },
+            { event: 'timerUpdate', enabled: true },
+            { event: 'answerQueued', enabled: true },
+            { event: 'playerStats', enabled: true },
+            { event: 'adBreakStarted', enabled: true },
+            { event: 'adBreakCountdown', enabled: true },
+            { event: 'adBreakEnded', enabled: true },
+            { event: 'immediateWinner', enabled: true },
+            { event: 'answerResult', enabled: true }
+          );
+        } else {
+          onlineSubscriptions.push(
+            { event: 'quizQuestion', enabled: false },
+            { event: 'quizCompleted', enabled: false },
+            { event: 'timerUpdate', enabled: false },
+            { event: 'answerQueued', enabled: false },
+            { event: 'playerStats', enabled: false },
+            { event: 'adBreakStarted', enabled: false },
+            { event: 'adBreakCountdown', enabled: false },
+            { event: 'adBreakEnded', enabled: false },
+            { event: 'immediateWinner', enabled: false },
+            { event: 'answerResult', enabled: false }
+          );
+        }
+        
+        return onlineSubscriptions;
+      
+      default:
+        return baseSubscriptions;
+    }
+  }
+
+  private sendContextualData(clientId: string, context: any) {
+    const client = this.server.sockets.sockets.get(clientId);
+    if (!client) return;
+
+    switch (context.mode) {
+      case 'home':
+        // Envoyer les stats utilisateur
+        client.emit('userStats', this.getUserStats());
+        
+        // Envoyer le prochain événement seulement si aucun lobby ouvert ET aucun quiz en cours
+        if (!this.currentLobby && !this.isGlobalQuizActive()) {
+          this.eventService.getNextEvent().then(event => {
+            if (event) {
+              client.emit('nextEvent', this.formatEvent(event));
+            }
+          });
+        }
+        
+        // Envoyer le statut du lobby
+        this.sendLobbyStatusToClient(clientId);
+        break;
+      
+      case 'solo':
+        // Rien à envoyer immédiatement, attendre startSoloQuiz
+        break;
+      
+      case 'online':
+      case 'quiz':
+        // Envoyer les stats des joueurs
+        client.emit('playerStats', this.getPlayerStats());
+        
+        // Si un quiz est en cours, rejoindre automatiquement
+        if (this.isGlobalQuizActive()) {
+          this.joinOngoingEvent(clientId);
+        }
+        break;
+    }
+  }
+
+  private sendLobbyStatusToClient(clientId: string) {
+    const client = this.server.sockets.sockets.get(clientId);
+    if (!client) return;
+    
+    const status = this.getCurrentLobbyStatus();
+    client.emit('lobbyStatus', status);
+  }
+
+  private shouldReceiveEvent(clientId: string, eventName: string): boolean {
+    const userSession = this.userSessions.get(clientId);
+    
+    // Si pas de session, refuser tous les événements sauf les essentiels
+    if (!userSession) {
+      const essentialEvents = ['error', 'forceLogout', 'connectionStatus', 'userStats', 'lobbyStatus', 'nextEvent'];
+      return essentialEvents.includes(eventName);
+    }
+    
+    // Permettre certains événements pour les utilisateurs non authentifiés en mode home
+    const guestAllowedEvents = ['userStats', 'lobbyStatus', 'nextEvent', 'lobbyOpened', 'eventCountdown', 'lobbyClosed'];
+    if (!userSession.isAuthenticated && guestAllowedEvents.includes(eventName)) {
+      // Vérifier si l'utilisateur est en mode home
+      if (!userSession.currentContext || userSession.currentContext.mode === 'home') {
+        return true;
+      }
+    }
+    
+    // BLOCAGE STRICT: Utilisateurs non authentifiés ne peuvent pas accéder aux modes online/quiz
+    const restrictedEvents = ['quizQuestion', 'timerUpdate', 'answerQueued', 'playerStats', 
+                             'eventStarted', 'eventCompleted', 'adBreakStarted', 'adBreakCountdown', 
+                             'adBreakEnded', 'immediateWinner', 'lobbyJoined', 'lobbyUpdate', 'lobbyLeft'];
+    
+    if (!userSession.isAuthenticated && restrictedEvents.includes(eventName)) {
+      console.log(`❌ Événement ${eventName} bloqué pour ${clientId}: utilisateur non authentifié`);
+      return false;
+    }
+    
+    // Si pas de contexte défini, envoyer les événements de base
+    if (!userSession.currentContext) {
+      const basicEvents = ['error', 'forceLogout', 'connectionStatus', 'authenticationConfirmed', 'userStats', 'lobbyStatus', 'nextEvent'];
+      return basicEvents.includes(eventName);
+    }
+
+    // Vérifier l'authentification pour les modes qui la nécessitent
+    if (userSession.currentContext.requiresAuth && !userSession.isAuthenticated) {
+      const authEvents = ['error', 'forceLogout', 'connectionStatus'];
+      return authEvents.includes(eventName);
+    }
+
+    const subscription = userSession.currentContext.subscriptions.find(s => s.event === eventName);
+    return subscription ? subscription.enabled : false;
   }
 
   // ======================
@@ -935,12 +1532,18 @@ export class GatewayService implements OnModuleDestroy {
   authenticateUser(clientId: string, token: string) {
     const userId = this.extractUserIdFromToken(token);
     if (!userId) {
-      console.warn("Impossible d'extraire l'ID utilisateur du token");
+      console.warn(`❌ Impossible d'extraire l'ID utilisateur du token pour ${clientId}`);
+      const client = this.server.sockets.sockets.get(clientId);
+      client?.emit('error', { 
+        message: 'Token invalide ou mal formé',
+        code: 'INVALID_TOKEN'
+      });
       return;
     }
 
     console.log(`🔐 Authentification user ${userId} pour client ${clientId}`);
 
+    // Vérifier les sessions existantes
     const existingClientId = this.userToClientMap.get(userId);
     if (existingClientId && existingClientId !== clientId) {
       const existingSession = this.userSessions.get(existingClientId);
@@ -970,6 +1573,15 @@ export class GatewayService implements OnModuleDestroy {
     this.userToClientMap.set(userId, clientId);
 
     console.log(`✅ User ${userId} authentifié sur client ${clientId}`);
+    
+    // Confirmer l'authentification au client
+    const client = this.server.sockets.sockets.get(clientId);
+    client?.emit('authenticationConfirmed', {
+      userId,
+      success: true,
+      message: 'Authentification réussie'
+    });
+    
     this.scheduleStatsBroadcast();
   }
 
@@ -994,8 +1606,16 @@ export class GatewayService implements OnModuleDestroy {
   private updateUserParticipation(clientId: string, isParticipating: boolean, mode?: 'play' | 'watch') {
     const session = this.userSessions.get(clientId);
     if (session) {
+      const wasParticipating = session.isParticipating;
+      const previousMode = session.participationMode;
+      
       session.isParticipating = isParticipating;
       session.participationMode = mode;
+      
+      if (wasParticipating !== isParticipating || previousMode !== mode) {
+        console.log(`🔄 Participation mise à jour pour ${clientId}: ${wasParticipating ? previousMode : 'none'} → ${isParticipating ? mode : 'none'}`);
+      }
+      
       this.scheduleStatsBroadcast();
     }
   }
@@ -1113,7 +1733,7 @@ export class GatewayService implements OnModuleDestroy {
     for (const event of activeEvents) {
       const eventTime = new Date(event.startDate).getTime();
       const lobbyTime = eventTime - 5 * 60 * 1000;
-      const endTime = eventTime;
+      const endTime = eventTime + 2 * 60 * 1000;
       if (now >= lobbyTime && now <= endTime) {
         await this.openEventLobby(event);
         break;
@@ -1121,44 +1741,77 @@ export class GatewayService implements OnModuleDestroy {
     }
   }
 
-  private sendNextEventInfo(clientId: string) {
-    this.eventService.getNextEvent().then((event) => {
-      if (event) {
-        const client = this.server.sockets.sockets.get(clientId);
-        client?.emit('nextEvent', this.formatEvent(event));
-      }
-    });
-  }
 
-  private sendLobbyInfo(clientId: string) {
-    if (!this.currentLobby) return;
-    const client = this.server.sockets.sockets.get(clientId);
-    client?.emit('lobbyOpened', {
-      event: {
-        id: this.currentLobby.event.id,
-        theme: this.currentLobby.event.theme,
-        numberOfQuestions: this.currentLobby.event.numberOfQuestions,
-        startDate: this.currentLobby.event.startDate,
-        minPlayers: this.currentLobby.event.minPlayers,
-      },
-    });
-  }
-
-  private sendEventCountdown(clientId: string) {
-    if (!this.currentLobby) return;
-    const now = Date.now();
-    const eventTime = new Date(this.currentLobby.event.startDate).getTime();
-    const timeLeft = Math.max(0, Math.floor((eventTime - now) / 1000));
-    const client = this.server.sockets.sockets.get(clientId);
-    client?.emit('eventCountdown', {
-      timeLeft,
-      participants: this.currentLobby.participants.size,
-      minPlayers: this.currentLobby.event.minPlayers,
-    });
-  }
 
   private isGlobalQuizActive(): boolean {
     return this.globalQuiz?.isActive === true;
+  }
+
+  // Méthode publique pour vérifier l'état du quiz global (utilisée par EventService)
+  public isGlobalQuizActivePublic(): boolean {
+    return this.isGlobalQuizActive();
+  }
+
+  // ======================
+  // AUTOMATIC LOBBY STATUS BROADCASTER
+  // ======================
+
+  private checkAndBroadcastLobbyStatus() {
+    const currentStatus = this.getCurrentLobbyStatus();
+    
+    // Compare with last status to detect changes
+    if (!this.lastLobbyStatus || JSON.stringify(currentStatus) !== JSON.stringify(this.lastLobbyStatus)) {
+      console.log('📡 Diffusion automatique du statut du lobby:', currentStatus);
+      
+      // Send to users in home mode only
+      this.userSessions.forEach((session, clientId) => {
+        if (this.shouldReceiveEvent(clientId, 'lobbyStatus')) {
+          const client = this.server.sockets.sockets.get(clientId);
+          client?.emit('lobbyStatus', currentStatus);
+        }
+      });
+      
+      this.lastLobbyStatus = currentStatus;
+    }
+  }
+
+  private getCurrentLobbyStatus() {
+    if (this.currentLobby) {
+      return {
+        isOpen: true,
+        event: {
+          id: this.currentLobby.event.id,
+          theme: this.currentLobby.event.theme,
+          startDate: this.currentLobby.event.startDate,
+          numberOfQuestions: this.currentLobby.event.numberOfQuestions,
+          minPlayers: this.currentLobby.event.minPlayers
+        },
+        participants: this.currentLobby.participants.size,
+        canJoin: true
+      };
+    } else if (this.isGlobalQuizActive()) {
+      // Si un quiz est en cours, permettre de rejoindre
+      return {
+        isOpen: true,
+        event: this.globalQuiz?.event ? {
+          id: this.globalQuiz.event.id,
+          theme: this.globalQuiz.event.theme,
+          startDate: this.globalQuiz.event.startDate,
+          numberOfQuestions: this.globalQuiz.event.numberOfQuestions,
+          minPlayers: this.globalQuiz.event.minPlayers
+        } : null,
+        participants: this.globalQuiz?.participants.size || 0,
+        canJoin: true,
+        isQuizInProgress: true
+      };
+    } else {
+      return {
+        isOpen: false,
+        event: null,
+        participants: 0,
+        canJoin: false
+      };
+    }
   }
 
   // ======================
@@ -1176,7 +1829,7 @@ export class GatewayService implements OnModuleDestroy {
     for (const event of events) {
       const eventTime = new Date(event.startDate).getTime();
       const lobbyTime = eventTime - 5 * 60 * 1000;
-      const endTime = eventTime 
+      const endTime = eventTime + 2 * 60 * 1000;
       const nowTime = now.getTime();
       console.log(`--- Événement: ${event.theme} ---`);
       console.log(`ID: ${event.id}`);
@@ -1219,7 +1872,7 @@ export class GatewayService implements OnModuleDestroy {
       const activeEvents = await this.eventService.findActiveEvents();
       for (const event of activeEvents) {
         const eventTime = new Date(event.startDate).getTime();
-        const maxWindow = eventTime;
+        const maxWindow = eventTime + 2 * 60 * 1000;
         if (now > maxWindow && !event.isCompleted) {
           console.log(`🧹 Nettoyage automatique: ${event.theme}`);
           await this.eventService.updateEvent(event.id, { isCompleted: true });
@@ -1246,5 +1899,142 @@ export class GatewayService implements OnModuleDestroy {
     if (updatedEvent) {
       await this.handleEventUpdated(updatedEvent);
     }
+  }
+
+  // ======================
+  // DEBUG & MONITORING
+  // ======================
+
+  /**
+   * Méthode de debug pour afficher l'état des contextes utilisateur
+   */
+  debugUserContexts(): void {
+    console.log('=== DEBUG CONTEXTES UTILISATEUR ===');
+    console.log(`Total sessions: ${this.userSessions.size}`);
+    
+    this.userSessions.forEach((session, clientId) => {
+      const context = session.currentContext;
+      console.log(`Client ${clientId}:`, {
+        authenticated: session.isAuthenticated,
+        userType: session.userType,
+        participating: session.isParticipating,
+        participationMode: session.participationMode,
+        context: context ? {
+          mode: context.mode,
+          isSolo: context.isSolo,
+          isInLobby: context.isInLobby,
+          isInQuiz: context.isInQuiz,
+          lastUpdated: context.lastUpdated || new Date(),
+          enabledEvents: context.subscriptions.filter(s => s.enabled).length,
+          disabledEvents: context.subscriptions.filter(s => !s.enabled).length
+        } : 'NO_CONTEXT'
+      });
+    });
+  }
+
+  /**
+   * Méthode de debug pour vérifier les abonnements d'un client
+   */
+  debugClientSubscriptions(clientId: string): void {
+    const session = this.userSessions.get(clientId);
+    if (!session) {
+      console.log(`❌ Client ${clientId} non trouvé`);
+      return;
+    }
+
+    console.log(`=== DEBUG ABONNEMENTS CLIENT ${clientId} ===`);
+    console.log('Session:', {
+      authenticated: session.isAuthenticated,
+      userType: session.userType,
+      context: session.currentContext?.mode || 'NO_CONTEXT'
+    });
+
+    if (session.currentContext) {
+      console.log('Abonnements:');
+      session.currentContext.subscriptions.forEach(sub => {
+        const status = sub.enabled ? '✅' : '❌';
+        console.log(`  ${status} ${sub.event}`);
+      });
+    }
+  }
+
+  /**
+   * Méthode de debug pour tester l'envoi d'événements
+   */
+  debugEventBroadcast(eventName: string, testData: any = { test: true }): void {
+    console.log(`=== DEBUG BROADCAST EVENT: ${eventName} ===`);
+    let sentCount = 0;
+    let blockedCount = 0;
+
+    this.userSessions.forEach((session, clientId) => {
+      const shouldReceive = this.shouldReceiveEvent(clientId, eventName);
+      if (shouldReceive) {
+        const client = this.server.sockets.sockets.get(clientId);
+        client?.emit(eventName, { ...testData, debugMode: true });
+        sentCount++;
+        console.log(`  ✅ Envoyé à ${clientId} (mode: ${session.currentContext?.mode || 'NO_CONTEXT'})`);
+      } else {
+        blockedCount++;
+        console.log(`  ❌ Bloqué pour ${clientId} (mode: ${session.currentContext?.mode || 'NO_CONTEXT'})`);
+      }
+    });
+
+    console.log(`Résultat: ${sentCount} envoyés, ${blockedCount} bloqués`);
+  }
+
+  /**
+   * Méthode pour obtenir un résumé des contextes
+   */
+  getContextSummary(): any {
+    const summary = {
+      totalSessions: this.userSessions.size,
+      contextModes: {} as any,
+      authenticationStatus: {
+        authenticated: 0,
+        guest: 0
+      }
+    };
+
+    this.userSessions.forEach((session) => {
+      // Compter par mode de contexte
+      const mode = session.currentContext?.mode || 'NO_CONTEXT';
+      summary.contextModes[mode] = (summary.contextModes[mode] || 0) + 1;
+
+      // Compter par statut d'authentification
+      if (session.isAuthenticated) {
+        summary.authenticationStatus.authenticated++;
+      } else {
+        summary.authenticationStatus.guest++;
+      }
+    });
+
+    return summary;
+  }
+
+  /**
+   * Obtient la session d'un utilisateur (pour validation dans le contrôleur)
+   */
+  getUserSession(clientId: string): UserSession | undefined {
+    return this.userSessions.get(clientId);
+  }
+
+  /**
+   * Vérifie si un utilisateur est authentifié
+   */
+  isUserAuthenticated(clientId: string): boolean {
+    const session = this.userSessions.get(clientId);
+    return session?.isAuthenticated || false;
+  }
+
+  /**
+   * Obtient les informations d'authentification d'un utilisateur
+   */
+  getUserAuthInfo(clientId: string): { isAuthenticated: boolean; userId?: string; userType?: string } {
+    const session = this.userSessions.get(clientId);
+    return {
+      isAuthenticated: session?.isAuthenticated || false,
+      userId: session?.userId,
+      userType: session?.userType || 'guest'
+    };
   }
 }

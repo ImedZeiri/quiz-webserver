@@ -83,7 +83,13 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   private async checkEventSchedule(): Promise<void> {
     try {
       const now = new Date();
-
+      
+      // Vérifier si un quiz est en cours via le service gateway
+      if (global.gatewayService && global.gatewayService.isGlobalQuizActivePublic && global.gatewayService.isGlobalQuizActivePublic()) {
+        console.log('🚫 Quiz en cours - report de la création d\'événement');
+        return;
+      }
+      
       // Look for the last scheduled event
       const lastEvent = await this.eventModel
         .findOne({ isCompleted: false })
@@ -190,7 +196,13 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   private async createNextEvent(): Promise<void> {
     try {
       const now = new Date();
-
+      
+      // Vérifier si un quiz est en cours avant de créer un nouvel événement
+      if (global.gatewayService && global.gatewayService.isGlobalQuizActivePublic && global.gatewayService.isGlobalQuizActivePublic()) {
+        console.log('🚫 Quiz en cours - annulation de la création d\'événement');
+        return;
+      }
+      
       // Find the last event to determine next start time
       const lastEvent = await this.eventModel
         .findOne()
