@@ -104,7 +104,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
       // Calculate time until next event should be created
       const timeSinceLastEvent = now.getTime() - lastEvent.startDate.getTime();
-      const fifteenMinutes = 15 * 60 * 1000;
+      const fifteenMinutes = 5 * 60 * 1000;
 
       if (timeSinceLastEvent >= fifteenMinutes) {
         // It's time to create a new event
@@ -140,7 +140,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       // Keep creating events until we're scheduled 2 hours ahead
       while (currentLastEvent.startDate.getTime() < targetTime.getTime()) {
         const nextEventTime = new Date(
-          currentLastEvent.startDate.getTime() + 15 * 60 * 1000,
+          currentLastEvent.startDate.getTime() + 5 * 60 * 1000,
         );
 
         // Check if event already exists at this time
@@ -214,16 +214,16 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       if (lastEvent && !lastEvent.isCompleted) {
         // Schedule 15 minutes after the last event
         nextEventTime = new Date(
-          lastEvent.startDate.getTime() + 15 * 60 * 1000,
+          lastEvent.startDate.getTime() + 5 * 60 * 1000,
         );
 
         // If the calculated time is in the past, schedule for 15 minutes from now
         if (nextEventTime.getTime() <= now.getTime()) {
-          nextEventTime = new Date(now.getTime() + 15 * 60 * 1000);
+          nextEventTime = new Date(now.getTime() + 5 * 60 * 1000);
         }
       } else {
         // No events or last event is completed, schedule for 15 minutes from now
-        nextEventTime = new Date(now.getTime() + 15 * 60 * 1000);
+        nextEventTime = new Date(now.getTime() + 5 * 60 * 1000);
       }
 
       const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
