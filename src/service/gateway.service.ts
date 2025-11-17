@@ -79,39 +79,39 @@ export class GatewayService implements OnModuleDestroy {
   // ======================
 
   private initializeScheduling() {
-    setTimeout(() => this.checkAndOpenLobbyIfNeeded(), 1000);
-    setInterval(() => this.debugEventStatus(), 30000);
-    setInterval(() => this.emergencyLobbyCheck(), 60000);
-    setInterval(() => this.cleanupExpiredEvents(), 30000);
+  setTimeout(() => this.checkAndOpenLobbyIfNeeded(), 1000);
+  setInterval(() => this.debugEventStatus(), 30000);
+  setInterval(() => this.emergencyLobbyCheck(), 60000);
+  setInterval(() => this.cleanupExpiredEvents(), 30000);
 
-    // Main event scheduler
-    this.eventCheckInterval = setInterval(async () => {
-      if (this.currentLobby || this.isGlobalQuizActive()) return;
-      await this.checkAndOpenLobbyIfNeeded();
-    }, 80);
+  // Main event scheduler - vérifie toutes les 10 secondes
+  this.eventCheckInterval = setInterval(async () => {
+    if (this.currentLobby || this.isGlobalQuizActive()) return;
+    await this.checkAndOpenLobbyIfNeeded();
+  }, 10000);
 
-    // Backup scheduler
-    setInterval(async () => {
-      if (this.currentLobby || this.isGlobalQuizActive()) return;
-      const eventsReady = await this.eventService.getEventsReadyForLobby();
-      for (const event of eventsReady) {
-        const now = Date.now();
-        const eventTime = new Date(event.startDate).getTime();
-        const lobbyTime = eventTime - 5 * 60 * 1000;
-        const endTime = eventTime + 2 * 60 * 1000;
-        if (now >= lobbyTime && now <= endTime) {
-          console.log(`🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`);
-          await this.openEventLobby(event);
-          break;
-        }
+  // Backup scheduler - vérifie toutes les 30 secondes
+  setInterval(async () => {
+    if (this.currentLobby || this.isGlobalQuizActive()) return;
+    const eventsReady = await this.eventService.getEventsReadyForLobby();
+    for (const event of eventsReady) {
+      const now = Date.now();
+      const eventTime = new Date(event.startDate).getTime();
+      const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes avant
+      const endTime = eventTime + 2 * 60 * 1000;
+      if (now >= lobbyTime && now <= endTime) {
+        console.log(`🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`);
+        await this.openEventLobby(event);
+        break;
       }
-    }, 10000);
+    }
+  }, 30000);
 
-    // Automatic lobby status broadcaster - every 20 seconds
-    this.lobbyStatusInterval = setInterval(() => {
-      this.checkAndBroadcastLobbyStatus();
-    }, 20000);
-  }
+  // Automatic lobby status broadcaster - every 20 seconds
+  this.lobbyStatusInterval = setInterval(() => {
+    this.checkAndBroadcastLobbyStatus();
+  }, 20000);
+}
 
   private startStatsScheduler() {
     this.statsUpdateInterval = setInterval(() => {
@@ -503,19 +503,19 @@ export class GatewayService implements OnModuleDestroy {
   }
 
   private scheduleEventCountdown(event: Event) {
-    const now = Date.now();
-    const eventTime = new Date(event.startDate).getTime();
-    const lobbyTime = eventTime - 5 * 60 * 1000;
-    const endTime = eventTime + 2 * 60 * 1000;
+  const now = Date.now();
+  const eventTime = new Date(event.startDate).getTime();
+  const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes avant
+  const endTime = eventTime + 2 * 60 * 1000;
 
-    if (now >= lobbyTime && !event.lobbyOpen && now <= endTime) {
-      this.openEventLobby(event);
-    } else if (lobbyTime > now) {
-      this.nextEventTimer = setTimeout(() => this.checkPendingEvents(), lobbyTime - now);
-    }
-
-    this.broadcastNextEvent(event);
+  if (now >= lobbyTime && !event.lobbyOpen && now <= endTime) {
+    this.openEventLobby(event);
+  } else if (lobbyTime > now) {
+    this.nextEventTimer = setTimeout(() => this.checkPendingEvents(), lobbyTime - now);
   }
+
+  this.broadcastNextEvent(event);
+}
 
   private async checkPendingEvents() {
     if (this.currentLobby || this.isGlobalQuizActive()) return;
@@ -1706,21 +1706,20 @@ export class GatewayService implements OnModuleDestroy {
     return this.questionService.findRandomQuestions(limit);
   }
 
-  private async checkAndOpenLobbyIfNeeded() {
-    if (this.currentLobby || this.isGlobalQuizActive()) return;
-    const activeEvents = await this.eventService.findActiveEvents();
-    const now = Date.now();
-    for (const event of activeEvents) {
-      const eventTime = new Date(event.startDate).getTime();
-      const lobbyTime = eventTime - 5 * 60 * 1000;
-      const endTime = eventTime + 2 * 60 * 1000;
-      if (now >= lobbyTime && now <= endTime) {
-        await this.openEventLobby(event);
-        break;
-      }
+private async checkAndOpenLobbyIfNeeded() {
+  if (this.currentLobby || this.isGlobalQuizActive()) return;
+  const activeEvents = await this.eventService.findActiveEvents();
+  const now = Date.now();
+  for (const event of activeEvents) {
+    const eventTime = new Date(event.startDate).getTime();
+    const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes avant
+    const endTime = eventTime + 2 * 60 * 1000;
+    if (now >= lobbyTime && now <= endTime) {
+      await this.openEventLobby(event);
+      break;
     }
   }
-
+}
   private isGlobalQuizActive(): boolean {
     return this.globalQuiz?.isActive === true;
   }

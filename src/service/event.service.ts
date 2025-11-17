@@ -46,7 +46,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         .exec();
 
       if (upcomingEvents.length === 0) {
-        // No upcoming events, create the first one starting in 15 minutes
+        // No upcoming events, create the first one starting in 10 minutes
         await this.createNextEvent();
         console.log('✅ Created initial event');
       } else {
@@ -60,7 +60,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private startEventScheduler(): void {
+ private startEventScheduler(): void {
     // Check every minute for event scheduling needs
     this.eventSchedulerInterval = setInterval(async () => {
       await this.checkEventSchedule();
@@ -80,7 +80,8 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     this.checkAndOpenLobbies();
   }
 
-  private async checkEventSchedule(): Promise<void> {
+
+   private async checkEventSchedule(): Promise<void> {
     try {
       const now = new Date();
       
@@ -102,11 +103,11 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Calculate time until next event should be created
+      // Calculate time until next event should be created (10 minutes interval)
       const timeSinceLastEvent = now.getTime() - lastEvent.startDate.getTime();
-      const fiveMinutes = 5 * 60 * 1000;
+      const tenMinutes = 10 * 60 * 1000;
 
-      if (timeSinceLastEvent >= fiveMinutes) {
+      if (timeSinceLastEvent >= tenMinutes) {
         // It's time to create a new event
         await this.createNextEvent();
       }
@@ -117,7 +118,6 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       console.error('❌ Error checking event schedule:', error);
     }
   }
-
   private async fillEventSchedule(): Promise<void> {
     try {
       const now = new Date();
@@ -140,7 +140,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       // Keep creating events until we're scheduled 2 hours ahead
       while (currentLastEvent.startDate.getTime() < targetTime.getTime()) {
         const nextEventTime = new Date(
-          currentLastEvent.startDate.getTime() + 5 * 60 * 1000,
+          currentLastEvent.startDate.getTime() + 10 * 60 * 1000, // 10 minutes interval
         );
 
         // Check if event already exists at this time
@@ -212,18 +212,18 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       let nextEventTime: Date;
 
       if (lastEvent && !lastEvent.isCompleted) {
-        // Schedule 15 minutes after the last event
+        // Schedule 10 minutes after the last event
         nextEventTime = new Date(
-          lastEvent.startDate.getTime() + 5 * 60 * 1000,
+          lastEvent.startDate.getTime() + 10 * 60 * 1000,
         );
 
-        // If the calculated time is in the past, schedule for 15 minutes from now
+        // If the calculated time is in the past, schedule for 10 minutes from now
         if (nextEventTime.getTime() <= now.getTime()) {
-          nextEventTime = new Date(now.getTime() + 5 * 60 * 1000);
+          nextEventTime = new Date(now.getTime() + 10 * 60 * 1000);
         }
       } else {
-        // No events or last event is completed, schedule for 15 minutes from now
-        nextEventTime = new Date(now.getTime() + 5 * 60 * 1000);
+        // No events or last event is completed, schedule for 10 minutes from now
+        nextEventTime = new Date(now.getTime() + 10 * 60 * 1000);
       }
 
       const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
@@ -242,16 +242,16 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   async checkAndOpenLobbies(): Promise<void> {
     try {
       const now = new Date();
-      const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
+      const threeMinutesFromNow = new Date(now.getTime() + 3 * 60 * 1000);
 
-      // Find events that start in exactly 2 minutes (±30 seconds) and don't have lobby open yet
+      // Find events that start in exactly 3 minutes (±30 seconds) and don't have lobby open yet
       const eventsToOpen = await this.eventModel
         .find({
           isCompleted: false,
           lobbyOpen: false,
           startDate: {
-            $gte: new Date(twoMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before 2-minute mark
-            $lte: new Date(twoMinutesFromNow.getTime() + 30 * 1000), // 30 seconds after 2-minute mark
+            $gte: new Date(threeMinutesFromNow.getTime() - 30 * 1000), // 30 seconds before 3-minute mark
+            $lte: new Date(threeMinutesFromNow.getTime() + 30 * 1000), // 30 seconds after 3-minute mark
           },
         })
         .exec();
