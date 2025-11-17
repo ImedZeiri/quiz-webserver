@@ -104,9 +104,9 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
       // Calculate time until next event should be created
       const timeSinceLastEvent = now.getTime() - lastEvent.startDate.getTime();
-      const fifteenMinutes = 5 * 60 * 1000;
+      const fiveMinutes = 5 * 60 * 1000;
 
-      if (timeSinceLastEvent >= fifteenMinutes) {
+      if (timeSinceLastEvent >= fiveMinutes) {
         // It's time to create a new event
         await this.createNextEvent();
       }
