@@ -28,12 +28,12 @@ export class GatewayController
   }
 
   handleConnection(client: Socket) {
-    console.log(`🔌 Nouvelle connexion WebSocket: ${client.id}`);
+  /*   console.log(`🔌 Nouvelle connexion WebSocket: ${client.id}`); */
     
     // Vérifier l'authentification via handshake
     const token = client.handshake.auth?.token;
     if (token) {
-      console.log(`🔐 Token détecté dans handshake pour ${client.id}`);
+     /*  console.log(`🔐 Token détecté dans handshake pour ${client.id}`); */
       // Authentifier immédiatement
       this.gatewayService.authenticateUser(client.id, token);
     }
@@ -84,13 +84,13 @@ export class GatewayController
       return;
     }
     
-    console.log(`🔐 Tentative d'authentification pour ${client.id}`);
+   /*  console.log(`🔐 Tentative d'authentification pour ${client.id}`); */
     this.gatewayService.authenticateUser(client.id, payload.token);
   }
 
   @SubscribeMessage('startSoloQuiz')
   async handleStartSoloQuiz(client: Socket, payload: StartSoloQuizPayload) {
-    console.log(`🎯 Demande de quiz solo de ${client.id}:`, payload);
+   /*  console.log(`🎯 Demande de quiz solo de ${client.id}:`, payload); */
     await this.gatewayService.startSoloQuiz(client.id, payload);
   }
 
@@ -159,7 +159,7 @@ export class GatewayController
       }
     }
 
-    console.log(`📍 Demande de contexte reçue de ${client.id}: ${payload.mode}`, payload);
+  /*   console.log(`📍 Demande de contexte reçue de ${client.id}: ${payload.mode}`, payload); */
     this.gatewayService.setUserContext(client.id, payload);
   }
 
@@ -195,19 +195,19 @@ export class GatewayController
 
   @SubscribeMessage('requestUserStats')
   async handleRequestUserStats(client: Socket) {
-    console.log(`📊 Demande explicite des stats utilisateur de ${client.id}`);
+    /* console.log(`📊 Demande explicite des stats utilisateur de ${client.id}`); */
     this.gatewayService.sendUserStatsToClient(client.id);
   }
 
   @SubscribeMessage('requestLobbyStatus')
   async handleRequestLobbyStatus(client: Socket) {
-    console.log(`🏠 Demande explicite du statut lobby de ${client.id}`);
+    /* console.log(`🏠 Demande explicite du statut lobby de ${client.id}`); */
     this.gatewayService.sendLobbyStatusToClient(client.id);
   }
 
   @SubscribeMessage('requestNextEvent')
   async handleRequestNextEvent(client: Socket) {
-    console.log(`📅 Demande explicite du prochain événement de ${client.id}`);
+   /*  console.log(`📅 Demande explicite du prochain événement de ${client.id}`); */
     this.gatewayService.sendNextEventToClient(client.id);
   }
 }

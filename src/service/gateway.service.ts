@@ -100,7 +100,7 @@ export class GatewayService implements OnModuleDestroy {
       const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes avant
       const endTime = eventTime + 2 * 60 * 1000;
       if (now >= lobbyTime && now <= endTime) {
-        console.log(`🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`);
+/*         console.log(`🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`); */
         await this.openEventLobby(event);
         break;
       }
@@ -150,7 +150,7 @@ export class GatewayService implements OnModuleDestroy {
     });
     
     if (sentCount > 0) {
-      console.log(`📊 Stats joueurs envoyées à ${sentCount} clients:`, stats);
+    /*   console.log(`📊 Stats joueurs envoyées à ${sentCount} clients:`, stats); */
     }
   }
 
@@ -196,7 +196,7 @@ export class GatewayService implements OnModuleDestroy {
     });
     
     if (sentCount > 0) {
-      console.log(`📊 Stats utilisateurs envoyées à ${sentCount} clients:`, stats);
+   /*    console.log(`📊 Stats utilisateurs envoyées à ${sentCount} clients:`, stats); */
     }
   }
 
@@ -314,7 +314,7 @@ export class GatewayService implements OnModuleDestroy {
     const wasAlreadyInLobby = this.currentLobby!.participants.has(clientId);
     this.currentLobby!.participants.add(clientId);
 
-    console.log(`Joueur ${clientId} ${wasAlreadyInLobby ? 'déjà dans' : 'a rejoint'} le lobby. Total: ${this.currentLobby!.participants.size}`);
+   /*  console.log(`Joueur ${clientId} ${wasAlreadyInLobby ? 'déjà dans' : 'a rejoint'} le lobby. Total: ${this.currentLobby!.participants.size}`); */
     
     const client = this.server.sockets.sockets.get(clientId);
     
@@ -348,7 +348,7 @@ export class GatewayService implements OnModuleDestroy {
     }
 
     if (this.currentLobby.participants.delete(clientId)) {
-      console.log(`Joueur ${clientId} a quitté le lobby. Total: ${this.currentLobby.participants.size}`);
+    /*   console.log(`Joueur ${clientId} a quitté le lobby. Total: ${this.currentLobby.participants.size}`); */
       this.broadcastLobbyUpdate();
     }
 
@@ -379,7 +379,7 @@ export class GatewayService implements OnModuleDestroy {
   // ======================
 
   async handleEventUpdated(updatedEvent: Event) {
-    console.log(`🔄 Événement modifié détecté: ${updatedEvent.theme}`);
+    /* console.log(`🔄 Événement modifié détecté: ${updatedEvent.theme}`); */
     const now = new Date().getTime();
     const eventTime = new Date(updatedEvent.startDate).getTime();
     const maxWindow = eventTime + 2 * 60 * 1000;
@@ -442,11 +442,11 @@ export class GatewayService implements OnModuleDestroy {
             });
           }
         });
-        console.log(
+       /*  console.log(
           `✅ NOUVEAU lobby créé avec ${currentParticipants.size} participants`,
-        );
+        ); */
       } else {
-        console.log(`❌ Nouveau timing invalide - lobby détruit sans recréation`);
+        /* console.log(`❌ Nouveau timing invalide - lobby détruit sans recréation`); */
       }
     } else if (!this.currentLobby && !this.isGlobalQuizActive()) {
       const newEventTime = new Date(updatedEvent.startDate).getTime();
@@ -963,7 +963,7 @@ export class GatewayService implements OnModuleDestroy {
   // ======================
 
   handleConnection(clientId: string) {
-    console.log(`🔌 Client connected: ${clientId}`);
+   /*  console.log(`🔌 Client connected: ${clientId}`); */
     
     // Créer la session utilisateur
     this.userSessions.set(clientId, {
@@ -987,7 +987,7 @@ export class GatewayService implements OnModuleDestroy {
   }
 
   handleDisconnection(clientId: string) {
-    console.log(`Client disconnected: ${clientId}`);
+   /*  console.log(`Client disconnected: ${clientId}`); */
     this.cleanupSession(clientId);
   }
 
@@ -1055,7 +1055,7 @@ export class GatewayService implements OnModuleDestroy {
   setUserContext(clientId: string, payload: { mode: string; isSolo?: boolean; isInLobby?: boolean; isInQuiz?: boolean }) {
     const userSession = this.userSessions.get(clientId);
     if (!userSession) {
-      console.warn(`Tentative de définir le contexte pour un utilisateur inexistant: ${clientId}`);
+     /*  console.warn(`Tentative de définir le contexte pour un utilisateur inexistant: ${clientId}`); */
       const client = this.server.sockets.sockets.get(clientId);
       client?.emit('error', { 
         message: 'Session utilisateur non trouvée. Veuillez vous reconnecter.',
@@ -1443,7 +1443,7 @@ export class GatewayService implements OnModuleDestroy {
                              'adBreakEnded', 'immediateWinner', 'lobbyJoined', 'lobbyUpdate', 'lobbyLeft'];
     
     if (!userSession.isAuthenticated && restrictedEvents.includes(eventName)) {
-      console.log(`❌ Événement ${eventName} bloqué pour ${clientId}: utilisateur non authentifié`);
+     /*  console.log(`❌ Événement ${eventName} bloqué pour ${clientId}: utilisateur non authentifié`); */
       return false;
     }
     
@@ -1516,7 +1516,7 @@ export class GatewayService implements OnModuleDestroy {
       return;
     }
 
-    console.log(`🔐 Authentification user ${userId} pour client ${clientId}`);
+    /* console.log(`🔐 Authentification user ${userId} pour client ${clientId}`); */
 
     // Vérifier les sessions existantes
     const existingClientId = this.userToClientMap.get(userId);
@@ -1524,7 +1524,7 @@ export class GatewayService implements OnModuleDestroy {
       const existingSession = this.userSessions.get(existingClientId);
       const existingToken = existingSession?.token;
       if (existingToken && existingToken !== token) {
-        console.log(`🚨 Tokens différents → Déconnexion ancienne session ${existingClientId}`);
+       /*  console.log(`🚨 Tokens différents → Déconnexion ancienne session ${existingClientId}`); */
         this.forceDisconnect(existingClientId);
       }
     }
@@ -1547,7 +1547,7 @@ export class GatewayService implements OnModuleDestroy {
     this.userSessions.set(clientId, userSession);
     this.userToClientMap.set(userId, clientId);
 
-    console.log(`✅ User ${userId} authentifié sur client ${clientId}`);
+    /* console.log(`✅ User ${userId} authentifié sur client ${clientId}`); */
     
     // Confirmer l'authentification au client
     const client = this.server.sockets.sockets.get(clientId);
@@ -1593,7 +1593,7 @@ export class GatewayService implements OnModuleDestroy {
       session.participationMode = mode;
       
       if (wasParticipating !== isParticipating || previousMode !== mode) {
-        console.log(`🔄 Participation mise à jour pour ${clientId}: ${wasParticipating ? previousMode : 'none'} → ${isParticipating ? mode : 'none'}`);
+      /*   console.log(`🔄 Participation mise à jour pour ${clientId}: ${wasParticipating ? previousMode : 'none'} → ${isParticipating ? mode : 'none'}`); */
       }
       
       this.scheduleStatsBroadcast();
@@ -1738,7 +1738,7 @@ private async checkAndOpenLobbyIfNeeded() {
     
     // Compare with last status to detect changes
     if (!this.lastLobbyStatus || JSON.stringify(currentStatus) !== JSON.stringify(this.lastLobbyStatus)) {
-      console.log('📡 Diffusion automatique du statut du lobby:', currentStatus);
+     /*  console.log('📡 Diffusion automatique du statut du lobby:', currentStatus); */
       
       // Send to users in home mode only
       this.userSessions.forEach((session, clientId) => {
@@ -2007,7 +2007,7 @@ private async checkAndOpenLobbyIfNeeded() {
    * Envoie les données initiales à un client spécifique
    */
   private sendInitialDataToClient(clientId: string): void {
-    console.log(`📡 Envoi des données initiales au client ${clientId}`);
+ /*    console.log(`📡 Envoi des données initiales au client ${clientId}`); */
     
     const client = this.server.sockets.sockets.get(clientId);
     if (!client) return;
@@ -2015,12 +2015,12 @@ private async checkAndOpenLobbyIfNeeded() {
     // Envoyer les stats utilisateur
     const stats = this.getUserStats();
     client.emit('userStats', stats);
-    console.log(`📊 Stats envoyées au client ${clientId}:`, stats);
+    /* console.log(`📊 Stats envoyées au client ${clientId}:`, stats); */
     
     // Envoyer le statut du lobby
     const lobbyStatus = this.getCurrentLobbyStatus();
     client.emit('lobbyStatus', lobbyStatus);
-    console.log(`🏠 Statut lobby envoyé au client ${clientId}:`, lobbyStatus);
+   /*  console.log(`🏠 Statut lobby envoyé au client ${clientId}:`, lobbyStatus); */
     
     // Envoyer le prochain événement si disponible
     this.sendNextEventIfAllowed(clientId);
@@ -2035,7 +2035,7 @@ private async checkAndOpenLobbyIfNeeded() {
 
     const stats = this.getUserStats();
     client.emit('userStats', stats);
-    console.log(`📊 Stats utilisateur envoyées à ${clientId}:`, stats);
+   /*  console.log(`📊 Stats utilisateur envoyées à ${clientId}:`, stats); */
   }
 
   /**
@@ -2066,16 +2066,16 @@ private async checkAndOpenLobbyIfNeeded() {
 
     // Ne jamais envoyer nextEvent si un lobby est ouvert ou va l'être
     if (this.currentLobby || this.isGlobalQuizActive()) {
-      console.log(`🚫 nextEvent bloqué pour ${clientId}: lobby=${!!this.currentLobby}, quiz=${this.isGlobalQuizActive()}`);
+     /*  console.log(`🚫 nextEvent bloqué pour ${clientId}: lobby=${!!this.currentLobby}, quiz=${this.isGlobalQuizActive()}`); */
       return;
     }
 
     this.eventService.getNextEvent().then(event => {
       if (event) {
         client.emit('nextEvent', this.formatEvent(event));
-        console.log(`📅 Prochain événement envoyé à ${clientId}:`, event.theme);
+       /*  console.log(`📅 Prochain événement envoyé à ${clientId}:`, event.theme); */
       } else {
-        console.log(`🚫 Aucun prochain événement disponible pour ${clientId}`);
+       /*  console.log(`🚫 Aucun prochain événement disponible pour ${clientId}`); */
       }
     });
   }

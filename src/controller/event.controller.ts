@@ -79,7 +79,7 @@ export class EventController {
       normalized.startDate = new Date(updates.startDate as any);
     }
 
-    console.log(`📝 Mise à jour de l'événement ${id} avec:`, normalized);
+  /*   console.log(`📝 Mise à jour de l'événement ${id} avec:`, normalized); */
 
     // Les hooks MongoDB se chargeront automatiquement de la notification
     const result = await this.eventService.updateEvent(id, normalized);
