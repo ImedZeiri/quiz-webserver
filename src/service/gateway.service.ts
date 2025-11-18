@@ -34,6 +34,7 @@ interface UserSession {
     subscriptions: { event: string; enabled: boolean; }[];
     lastUpdated?: Date;
     requiresAuth?: boolean;
+    
   };
 }
 
@@ -46,7 +47,7 @@ export class GatewayService implements OnModuleDestroy {
   private currentLobby: EventLobby | null = null;
   private userToClientMap = new Map<string, string>();
   private userSessions = new Map<string, UserSession>();
-
+private isDatabaseConnected = true;
   private eventCheckInterval?: NodeJS.Timeout;
   private nextEventTimer?: NodeJS.Timeout;
   private statsUpdateInterval?: NodeJS.Timeout;
@@ -78,39 +79,51 @@ export class GatewayService implements OnModuleDestroy {
   // SCHEDULING & INIT
   // ======================
 
-  private initializeScheduling() {
+private initializeScheduling() {
+  console.log('🔄 Initializing scheduling with 3-minute lobby rule...');
+  
   setTimeout(() => this.checkAndOpenLobbyIfNeeded(), 1000);
   setInterval(() => this.debugEventStatus(), 30000);
   setInterval(() => this.emergencyLobbyCheck(), 60000);
   setInterval(() => this.cleanupExpiredEvents(), 30000);
 
-  // Main event scheduler - vérifie toutes les 10 secondes
+  // Main event scheduler with error handling
   this.eventCheckInterval = setInterval(async () => {
-    if (this.currentLobby || this.isGlobalQuizActive()) return;
-    await this.checkAndOpenLobbyIfNeeded();
-  }, 10000);
-
-  // Backup scheduler - vérifie toutes les 30 secondes
-  setInterval(async () => {
-    if (this.currentLobby || this.isGlobalQuizActive()) return;
-    const eventsReady = await this.eventService.getEventsReadyForLobby();
-    for (const event of eventsReady) {
-      const now = Date.now();
-      const eventTime = new Date(event.startDate).getTime();
-      const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes avant
-      const endTime = eventTime + 2 * 60 * 1000;
-      if (now >= lobbyTime && now <= endTime) {
-        console.log(`🔄 BACKUP: Ouverture automatique du lobby pour: ${event.theme}`);
-        await this.openEventLobby(event);
-        break;
+    try {
+      if (this.currentLobby || this.isGlobalQuizActive()) return;
+      
+      const eventsReady = await this.eventService.getEventsReadyForLobby();
+      for (const event of eventsReady) {
+        const now = Date.now();
+        const eventTime = new Date(event.startDate).getTime();
+        const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes before
+        
+        if (now >= lobbyTime) {
+          console.log(`🔄 MAIN: Opening lobby for: ${event.theme} (3 minutes before start)`);
+          await this.openEventLobby(event);
+          break;
+        }
       }
+    } catch (error) {
+      console.error('❌ Error in event scheduler:', error);
+      this.handleGatewayError(error);
     }
-  }, 30000);
+  }, 15000);
 
-  // Automatic lobby status broadcaster - every 20 seconds
+  // Automatic lobby status broadcaster
   this.lobbyStatusInterval = setInterval(() => {
     this.checkAndBroadcastLobbyStatus();
   }, 20000);
+}
+private handleGatewayError(error: any): void {
+  console.error('🚨 Gateway error:', error);
+  this.isDatabaseConnected = false;
+  
+  // Try to recover
+  setTimeout(() => {
+    this.isDatabaseConnected = true;
+    console.log('✅ Gateway recovered');
+  }, 5000);
 }
 
   private startStatsScheduler() {
@@ -405,7 +418,7 @@ export class GatewayService implements OnModuleDestroy {
       this.destroyCurrentLobby('Événement modifié - recréation du lobby');
   
       const newEventTime = new Date(updatedEvent.startDate).getTime();
-      const newLobbyTime = newEventTime - 5 * 60 * 1000;
+      const newLobbyTime = newEventTime - 3 * 60 * 1000;
       const newEndTime = newEventTime + 2 * 60 * 1000;
   
       if (now >= newLobbyTime && now <= newEndTime) {
@@ -450,7 +463,7 @@ export class GatewayService implements OnModuleDestroy {
       }
     } else if (!this.currentLobby && !this.isGlobalQuizActive()) {
       const newEventTime = new Date(updatedEvent.startDate).getTime();
-      const newLobbyTime = newEventTime - 5 * 60 * 1000;
+      const newLobbyTime = newEventTime - 2 * 60 * 1000;
       const newEndTime = newEventTime + 2 * 60 * 1000;
       if (now >= newLobbyTime && now <= newEndTime) {
         console.log(`🚀 Ouverture d'un nouveau lobby suite à la modification`);
@@ -502,35 +515,44 @@ export class GatewayService implements OnModuleDestroy {
     if (nextEvent) this.scheduleEventCountdown(nextEvent);
   }
 
-  private scheduleEventCountdown(event: Event) {
-  const now = Date.now();
-  const eventTime = new Date(event.startDate).getTime();
-  const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes avant
-  const endTime = eventTime + 2 * 60 * 1000;
+private scheduleEventCountdown(event: Event) {
+  try {
+    const now = Date.now();
+    const eventTime = new Date(event.startDate).getTime();
+    const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes before
 
-  if (now >= lobbyTime && !event.lobbyOpen && now <= endTime) {
-    this.openEventLobby(event);
-  } else if (lobbyTime > now) {
-    this.nextEventTimer = setTimeout(() => this.checkPendingEvents(), lobbyTime - now);
+    if (now >= lobbyTime && !event.lobbyOpen) {
+      this.openEventLobby(event);
+    } else if (lobbyTime > now) {
+      // Schedule lobby opening for exactly 3 minutes before event
+      const timeUntilLobby = lobbyTime - now;
+      console.log(`⏰ Scheduling lobby to open in ${Math.round(timeUntilLobby / 1000)}s for: ${event.theme}`);
+      
+      this.nextEventTimer = setTimeout(() => {
+        this.openEventLobby(event);
+      }, timeUntilLobby);
+    }
+
+    this.broadcastNextEvent(event);
+  } catch (error) {
+    console.error('❌ Error in scheduleEventCountdown:', error);
+    this.handleGatewayError(error);
   }
-
-  this.broadcastNextEvent(event);
 }
 
-  private async checkPendingEvents() {
-    if (this.currentLobby || this.isGlobalQuizActive()) return;
-    const eventsReady = await this.eventService.getEventsReadyForLobby();
-    for (const event of eventsReady) {
-      const now = Date.now();
-      const eventTime = new Date(event.startDate).getTime();
-      const lobbyTime = eventTime - 5 * 60 * 1000;
-      const endTime = eventTime + 2 * 60 * 1000;
-      if (now >= lobbyTime && now <= endTime) {
-        await this.openEventLobby(event);
-        break;
-      }
+private async checkPendingEvents() {
+  if (this.currentLobby || this.isGlobalQuizActive()) return;
+  const eventsReady = await this.eventService.getEventsReadyForLobby();
+  for (const event of eventsReady) {
+    const now = Date.now();
+    const eventTime = new Date(event.startDate).getTime();
+    const lobbyTime = eventTime - 3 * 60 * 1000; // ✅ CONSISTENT: 3 minutes
+    if (now >= lobbyTime) {
+      await this.openEventLobby(event);
+      break;
     }
   }
+}
 
   // ======================
   // GLOBAL QUIZ
@@ -1707,17 +1729,25 @@ export class GatewayService implements OnModuleDestroy {
   }
 
 private async checkAndOpenLobbyIfNeeded() {
-  if (this.currentLobby || this.isGlobalQuizActive()) return;
-  const activeEvents = await this.eventService.findActiveEvents();
-  const now = Date.now();
-  for (const event of activeEvents) {
-    const eventTime = new Date(event.startDate).getTime();
-    const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes avant
-    const endTime = eventTime + 2 * 60 * 1000;
-    if (now >= lobbyTime && now <= endTime) {
-      await this.openEventLobby(event);
-      break;
+  try {
+    if (this.currentLobby || this.isGlobalQuizActive() || !this.isDatabaseConnected) return;
+    
+    const activeEvents = await this.eventService.findActiveEvents();
+    const now = Date.now();
+    
+    for (const event of activeEvents) {
+      const eventTime = new Date(event.startDate).getTime();
+      const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes before
+      
+      if (now >= lobbyTime && now <= eventTime + 2 * 60 * 1000) {
+        console.log(`🔄 Auto-opening lobby for: ${event.theme}`);
+        await this.openEventLobby(event);
+        break;
+      }
     }
+  } catch (error) {
+    console.error('❌ Error in checkAndOpenLobbyIfNeeded:', error);
+    this.handleGatewayError(error);
   }
 }
   private isGlobalQuizActive(): boolean {
@@ -1795,53 +1825,62 @@ private async checkAndOpenLobbyIfNeeded() {
   // ADMIN & DEBUG
   // ======================
 
-  private async debugEventStatus() {
-    const now = new Date();
-    const events = await this.eventService.findActiveEvents();
-    console.log('=== DEBUG STATUS ===');
-    console.log(`Heure actuelle: ${now.toLocaleString()}`);
-    console.log(`Lobby actuel: ${this.currentLobby ? 'OUVERT' : 'FERMÉ'}`);
-    console.log(`Quiz global actif: ${this.isGlobalQuizActive()}`);
-    console.log(`Événements actifs: ${events.length}`);
-    for (const event of events) {
-      const eventTime = new Date(event.startDate).getTime();
-      const lobbyTime = eventTime - 5 * 60 * 1000;
-      const endTime = eventTime + 2 * 60 * 1000;
-      const nowTime = now.getTime();
-      console.log(`--- Événement: ${event.theme} ---`);
-      console.log(`ID: ${event.id}`);
-      console.log(`Heure événement: ${new Date(eventTime).toLocaleString()}`);
-      console.log(`Fenêtre lobby: ${new Date(lobbyTime).toLocaleString()} - ${new Date(endTime).toLocaleString()}`);
-      console.log(`Lobby ouvert: ${event.lobbyOpen}`);
-      console.log(`Dans fenêtre: ${nowTime >= lobbyTime && nowTime <= endTime}`);
-    }
+ private async debugEventStatus() {
+  const now = new Date();
+  const events = await this.eventService.findActiveEvents();
+  console.log('=== DEBUG STATUS (3-minute lobby rule) ===');
+  console.log(`Current time: ${now.toLocaleString()}`);
+  console.log(`Current lobby: ${this.currentLobby ? 'OPEN' : 'CLOSED'}`);
+  console.log(`Global quiz active: ${this.isGlobalQuizActive()}`);
+  console.log(`Active events: ${events.length}`);
+  
+  for (const event of events) {
+    const eventTime = new Date(event.startDate).getTime();
+    const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes before
+    const endTime = eventTime + 2 * 60 * 1000;
+    const nowTime = now.getTime();
+    
+    console.log(`--- Event: ${event.theme} ---`);
+    console.log(`ID: ${event.id}`);
+    console.log(`Event time: ${new Date(eventTime).toLocaleString()}`);
+    console.log(`Lobby should open at: ${new Date(lobbyTime).toLocaleString()}`);
+    console.log(`Lobby open: ${event.lobbyOpen}`);
+    console.log(`In 3-minute window: ${nowTime >= lobbyTime && nowTime <= endTime}`);
+    console.log(`Time until lobby: ${Math.round((lobbyTime - nowTime) / 1000)}s`);
   }
+}
+private async emergencyLobbyCheck() {
+  try {
+    if (!this.isDatabaseConnected) return;
+    
+    console.log("🚨 EMERGENCY LOBBY CHECK (3-minute rule)");
+    if (this.currentLobby || this.isGlobalQuizActive()) return;
 
-  private async emergencyLobbyCheck() {
-    try {
-      console.log("🚨 VÉRIFICATION D'URGENCE DES LOBBIES");
-      if (this.currentLobby || this.isGlobalQuizActive()) return;
-
-      const eventsInWindow = await this.eventService.getEventsInLobbyWindow();
-      if (eventsInWindow.length > 0) {
-        console.log(`⚠️ ALERTE: ${eventsInWindow.length} événement(s) dans la fenêtre de lobby mais aucun lobby ouvert!`);
-        for (const event of eventsInWindow) {
-          const now = Date.now();
-          const eventTime = new Date(event.startDate).getTime();
-          const timeUntilEvent = Math.round((eventTime - now) / 1000);
-          console.log(`🔧 CORRECTION: Ouverture forcée du lobby pour "${event.theme}" (dans ${timeUntilEvent}s)`);
+    const eventsReady = await this.eventService.getEventsReadyForLobby();
+    if (eventsReady.length > 0) {
+      console.log(`⚠️ ALERT: ${eventsReady.length} event(s) within 3-minute lobby window but no lobby open!`);
+      for (const event of eventsReady) {
+        const now = Date.now();
+        const eventTime = new Date(event.startDate).getTime();
+        const timeUntilEvent = Math.round((eventTime - now) / 1000);
+        
+        if (timeUntilEvent <= 180 && timeUntilEvent > 0) { // Within 3 minutes
+          console.log(`🔧 CORRECTION: Force opening lobby for "${event.theme}" (starts in ${timeUntilEvent}s)`);
           await this.openEventLobby(event);
           this.server.emit('emergencyLobbyOpened', {
             event: this.formatEvent(event),
-            message: 'Lobby ouvert automatiquement - événement imminent!',
+            message: 'Lobby automatically opened - event starting soon!',
           });
           break;
         }
       }
-    } catch (error) {
-      console.error("❌ Erreur lors de la vérification d'urgence:", error);
     }
+  } catch (error) {
+    console.error("❌ Error during emergency check:", error);
+    this.handleGatewayError(error);
   }
+}
+
 
   private async cleanupExpiredEvents() {
     try {
