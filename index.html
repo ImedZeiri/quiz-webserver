@@ -386,9 +386,16 @@
   </div>
 
   <script>
-    const socket = io("http://localhost:3000");
+    const socket = io("http://localhost:3000", {
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 10
+    });
+
     let currentQuestion = null;
     let selectedAnswer = null;
+    let isInLobby = false;
+    let isInQuiz = false;
 
     // Elements
     const statusElement = document.getElementById('status');
@@ -402,13 +409,17 @@
     const questionText = document.getElementById('question-text');
     const answersContainer = document.getElementById('answers-container');
     const submitBtn = document.getElementById('submit-btn');
-    
+
     let currentTimeLeft = 0;
 
     // Socket events
     socket.on("connect", () => {
       statusElement.textContent = `✅ Connecté au serveur`;
       statusElement.className = 'status connected';
+
+      if (isInLobby && !isInQuiz) {
+        socket.emit('joinLobby');
+      }
     });
 
     socket.on("disconnect", () => {
@@ -417,10 +428,13 @@
     });
 
     socket.on("quizQuestion", (data) => {
+      isInQuiz = true;
       displayQuestion(data);
     });
 
     socket.on("quizCompleted", (results) => {
+      isInQuiz = false;
+      isInLobby = false;
       showResults(results);
     });
 
@@ -469,11 +483,12 @@
     });
 
     socket.on("eventCancelled", (data) => {
+      isInLobby = false;
       showEventCancelled(data);
     });
 
     socket.on("autoStartQuiz", (data) => {
-      // Démarrer automatiquement le quiz pour les participants du lobby
+      isInQuiz = true;
       document.getElementById('lobby-section').style.display = 'none';
       startScreen.style.display = 'none';
       questionScreen.style.display = 'block';
@@ -671,11 +686,14 @@
     }
 
     function restartQuiz() {
+      isInQuiz = false;
+      isInLobby = false;
       resultsScreen.style.display = 'none';
       startScreen.style.display = 'block';
       progressBar.style.width = '0%';
       document.getElementById('player-stats').style.display = 'none';
       document.getElementById('winner-announcement').style.display = 'none';
+      document.getElementById('event-banner').style.display = 'none';
     }
 
     function showNextEvent(event) {
@@ -716,16 +734,29 @@
     }
 
     function showLobby(event) {
+      if (isInQuiz) return;
+
       document.getElementById('next-event').style.display = 'none';
       const lobbyDiv = document.getElementById('lobby-section');
       const detailsDiv = document.getElementById('lobby-details');
-      
+      const joinBtn = document.getElementById('join-lobby-btn');
+
       lobbyDiv.style.display = 'block';
       detailsDiv.innerHTML = `
         <div><strong>Événement:</strong> ${event.theme}</div>
         <div><strong>Questions:</strong> ${event.numberOfQuestions}</div>
         <div><strong>Joueurs requis:</strong> ${event.minPlayers}</div>
       `;
+
+      if (isInLobby) {
+        joinBtn.textContent = '✅ Dans le lobby';
+        joinBtn.disabled = true;
+        joinBtn.style.backgroundColor = '#4CAF50';
+      } else {
+        joinBtn.textContent = 'Rejoindre le Lobby';
+        joinBtn.disabled = false;
+        joinBtn.style.backgroundColor = '#2196F3';
+      }
     }
 
     function updateEventCountdown(timeLeft, participants, minPlayers) {
@@ -744,7 +775,10 @@
     }
 
     function joinLobby() {
-      socket.emit('joinLobby');
+      if (!isInLobby) {
+        isInLobby = true;
+        socket.emit('joinLobby');
+      }
     }
 
     function showLobbyJoined(data) {
@@ -760,11 +794,14 @@
     }
 
 
-    function autoStartQuiz(data) {
-      // Masquer le lobby et démarrer le quiz automatiquement
-      document.getElementById('lobby-section').style.display = 'none';
-      startScreen.style.display = 'none';
-      questionScreen.style.display = 'block';
+    function showEventCancelled(data) {
+      isInLobby = false;
+      const lobbyDiv = document.getElementById('lobby-section');
+      lobbyDiv.style.display = 'none';
+      alert(`Événement annulé: ${data.reason}\n${data.actual} joueur(s) présent(s), ${data.required} requis`);
+
+      resultsScreen.style.display = 'none';
+      startScreen.style.display = 'block';
     }
   </script>
 </body>
