@@ -47,28 +47,9 @@ export class GatewayService {
 
   handleConnection(clientId: string) {
     console.log(`Client connected: ${clientId}`);
-
-    if (this.globalQuiz?.isActive) {
-      const existingSession = this.quizSessions.get(clientId);
-      if (existingSession) {
-        console.log(`Reconnecting player ${clientId} to active quiz`);
-        const client = this.server.sockets.sockets.get(clientId);
-        if (client) {
-          this.sendCurrentQuestion(client, existingSession);
-        }
-      }
-    }
-
     this.sendNextEventInfo(clientId);
     if (this.currentLobby) {
       this.sendLobbyInfo(clientId);
-      if (this.currentLobby.participants.has(clientId)) {
-        const client = this.server.sockets.sockets.get(clientId);
-        client?.emit('lobbyJoined', {
-          event: this.currentLobby.event,
-          participants: this.currentLobby.participants.size,
-        });
-      }
     }
     this.broadcastPlayerStats();
   }
@@ -78,14 +59,11 @@ export class GatewayService {
     const session = this.quizSessions.get(clientId);
     if (session?.timer) clearTimeout(session.timer);
     if (session?.timerInterval) clearInterval(session.timerInterval);
-
-    if (!this.globalQuiz?.isActive) {
-      this.quizSessions.delete(clientId);
-      if (this.globalQuiz?.participants) {
-        this.globalQuiz.participants.delete(clientId);
-      }
+    this.quizSessions.delete(clientId);
+    if (this.globalQuiz?.participants) {
+      this.globalQuiz.participants.delete(clientId);
     }
-
+    // Ne pas supprimer du lobby lors de la déconnexion
     this.broadcastPlayerStats();
   }
 
@@ -372,10 +350,12 @@ export class GatewayService {
       }
     });
 
+    setTimeout(() => {
+      this.server.disconnectSockets(true);
+    }, 5000);
+
     this.globalQuiz = null;
     this.quizSessions.clear();
-
-    this.initializeNextEvent();
   }
 
   private getPlayerStats(): PlayerStats {
