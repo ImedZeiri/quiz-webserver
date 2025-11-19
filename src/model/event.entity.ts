@@ -26,6 +26,12 @@ export class Event extends Document {
 
   @Prop({ default: false })
   isStarted: boolean;
+
+    @Prop()
+  completedAt: Date; // Heure à laquelle l'événement s'est terminé
+
+  @Prop({ default: false })
+  nextEventCreated: boolean;
 }
 
 export const EventSchema = SchemaFactory.createForClass(Event);

@@ -7,6 +7,7 @@ import { Event } from '../model/event.entity';
 export class EventService implements OnModuleInit, OnModuleDestroy {
   private eventSchedulerInterval: NodeJS.Timeout;
   private lobbySchedulerInterval: NodeJS.Timeout;
+  private eventCompletionInterval: NodeJS.Timeout;
   private isDatabaseConnected = true;
 
   constructor(
@@ -18,6 +19,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     console.log('🚀 EventService initializing...');
     this.startEventScheduler();
     this.startLobbyScheduler();
+    this.startEventCompletionChecker();
     this.initializeEvents();
   }
 
@@ -29,11 +31,120 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     if (this.lobbySchedulerInterval) {
       clearInterval(this.lobbySchedulerInterval);
     }
+    if (this.eventCompletionInterval) {
+      clearInterval(this.eventCompletionInterval);
+    }
+  }
+
+  private startEventCompletionChecker(): void {
+    // Vérifier toutes les 30 secondes les événements terminés
+    this.eventCompletionInterval = setInterval(async () => {
+      if (this.isDatabaseConnected) {
+        await this.checkCompletedEventsAndCreateNew();
+      }
+    }, 30 * 1000);
+
+    // Exécuter immédiatement au démarrage
+    this.checkCompletedEventsAndCreateNew();
+  }
+
+  private async checkCompletedEventsAndCreateNew(): Promise<void> {
+    try {
+      const now = new Date();
+      
+      // Trouver les événements récemment terminés (dans la dernière minute)
+      const recentlyCompletedEvents = await this.eventModel
+        .find({
+          isCompleted: true,
+          completedAt: {
+            $gte: new Date(now.getTime() - 2 * 60 * 1000), // Dans les 2 dernières minutes
+            $lte: now
+          },
+          nextEventCreated: { $ne: true } // Vérifier qu'un nouvel événement n'a pas déjà été créé
+        })
+        .sort({ completedAt: -1 })
+        .exec();
+
+      for (const completedEvent of recentlyCompletedEvents) {
+      
+        
+        // Vérifier si un quiz est actif
+        if (global.gatewayService && global.gatewayService.isGlobalQuizActivePublic && global.gatewayService.isGlobalQuizActivePublic()) {
+          console.log('🚫 Quiz in progress - postponing new event creation');
+          continue;
+        }
+
+        // Créer un nouvel événement 1 minute après la fin du précédent
+        const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
+        
+        // S'assurer que le nouvel événement est dans le futur
+        if (nextEventTime.getTime() <= now.getTime()) {
+          nextEventTime.setTime(now.getTime() + 1 * 60 * 1000);
+        }
+
+        const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        })}`;
+
+        // Créer le nouvel événement
+        await this.createEvent(theme, nextEventTime, 5, 2);
+
+
+        // Marquer l'événement comme ayant généré un nouvel événement
+        await this.eventModel.findByIdAndUpdate(
+          completedEvent._id,
+          { nextEventCreated: true }
+        ).exec();
+      }
+
+      this.isDatabaseConnected = true;
+    } catch (error) {
+
+      this.handleDatabaseError(error);
+    }
   }
 
   private async initializeEvents(): Promise<void> {
     try {
       console.log('🚀 Initializing event schedule...');
+
+      // Mettre à jour le schéma pour les événements existants
+      await this.updateEventSchemaForExistingEvents();
+
+      // Vérifier les événements terminés récents qui n'ont pas généré de nouvel événement
+      const now = new Date();
+      const recentlyCompletedWithoutNextEvent = await this.eventModel
+        .find({
+          isCompleted: true,
+          completedAt: {
+            $gte: new Date(now.getTime() - 5 * 60 * 1000), // Dans les 5 dernières minutes
+          },
+          nextEventCreated: false
+        })
+        .sort({ completedAt: -1 })
+        .exec();
+
+      for (const completedEvent of recentlyCompletedWithoutNextEvent) {
+        const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
+        
+        if (nextEventTime.getTime() > now.getTime()) {
+          const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          })}`;
+
+          await this.createEvent(theme, nextEventTime, 5, 2);
+          console.log(`✅ Created event for recently completed: ${theme} at ${nextEventTime}`);
+
+          await this.eventModel.findByIdAndUpdate(
+            completedEvent._id,
+            { nextEventCreated: true }
+          ).exec();
+        }
+      }
 
       // Check for existing upcoming events
       const upcomingEvents = await this.eventModel
@@ -45,7 +156,6 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         .exec();
 
       if (upcomingEvents.length === 0) {
-        // No upcoming events, create the first one starting in 5 minutes
         await this.createNextEvent();
         console.log('✅ Created initial event');
       } else {
@@ -57,7 +167,6 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       console.error('❌ Error initializing events:', error);
       this.isDatabaseConnected = false;
-      // Retry after 10 seconds
       setTimeout(() => this.initializeEvents(), 10000);
     }
   }
@@ -107,11 +216,11 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Calculate time until next event should be created (5 minutes interval)
+      // Calculate time until next event should be created (1 minute interval)
       const timeSinceLastEvent = now.getTime() - lastEvent.startDate.getTime();
-      const fiveMinutes = 5 * 60 * 1000;
+      const oneMinute = 1 * 60 * 1000;
 
-      if (timeSinceLastEvent >= fiveMinutes) {
+      if (timeSinceLastEvent >= oneMinute) {
         await this.createNextEvent();
       }
 
@@ -144,7 +253,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
       while (currentLastEvent.startDate.getTime() < targetTime.getTime()) {
         const nextEventTime = new Date(
-          currentLastEvent.startDate.getTime() + 5 * 60 * 1000,
+          currentLastEvent.startDate.getTime() + 1 * 60 * 1000,
         );
 
         // Check if event already exists at this time
@@ -169,7 +278,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
           console.log(`✅ Scheduled event: ${theme} at ${nextEventTime}`);
         }
 
-        // Update currentLastEvent for next iteration - FIXED TYPE ISSUE
+        // Update currentLastEvent for next iteration
         const newLastEvent = await this.eventModel
           .findOne({ isCompleted: false })
           .sort({ startDate: -1 })
@@ -215,16 +324,16 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       let nextEventTime: Date;
 
       if (lastEvent && !lastEvent.isCompleted) {
-        // Schedule 5 minutes after the last event
-        nextEventTime = new Date(lastEvent.startDate.getTime() + 5 * 60 * 1000);
+        // Schedule 1 minute after the last event
+        nextEventTime = new Date(lastEvent.startDate.getTime() + 1 * 60 * 1000);
 
-        // If the calculated time is in the past, schedule for 5 minutes from now
+        // If the calculated time is in the past, schedule for 1 minute from now
         if (nextEventTime.getTime() <= now.getTime()) {
-          nextEventTime = new Date(now.getTime() + 5 * 60 * 1000);
+          nextEventTime = new Date(now.getTime() + 1 * 60 * 1000);
         }
       } else {
-        // No events or last event is completed, schedule for 5 minutes from now
-        nextEventTime = new Date(now.getTime() + 5 * 60 * 1000);
+        // No events or last event is completed, schedule for 1 minute from now
+        nextEventTime = new Date(now.getTime() + 1 * 60 * 1000);
       }
 
       // Ensure the event is at least 1 minute in the future
@@ -253,7 +362,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     try {
       const now = new Date();
       
-      // Find events that should have their lobby open now (3 minutes before start)
+      // Find events that should have their lobby open now (1 minute before start)
       const eventsToOpen = await this.eventModel
         .find({
           isCompleted: false,
@@ -268,9 +377,8 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       for (const event of eventsToOpen) {
         const timeUntilEvent = event.startDate.getTime() - now.getTime();
         
-        // Open lobby if we're within the 3-minute window before event start
+        // Open lobby if we're within the 1-minute window before event start
         if (timeUntilEvent <= 1 * 60 * 1000 && timeUntilEvent > 0) {
-          // FIXED TYPE ISSUE - Safe ID access
           const eventId = event._id?.toString();
           if (eventId) {
             await this.openLobby(eventId);
@@ -308,6 +416,29 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }, 5000);
   }
 
+  private async updateEventSchemaForExistingEvents(): Promise<void> {
+    try {
+      // Mettre à jour les événements existants sans completedAt
+      await this.eventModel.updateMany(
+        { completedAt: { $exists: false }, isCompleted: true },
+        { 
+          completedAt: new Date(), 
+          nextEventCreated: false 
+        }
+      ).exec();
+
+      // Mettre à jour les événements existants sans nextEventCreated
+      await this.eventModel.updateMany(
+        { nextEventCreated: { $exists: false } },
+        { nextEventCreated: false }
+      ).exec();
+      
+     
+    } catch (error) {
+      console.error('❌ Error updating event schema:', error);
+    }
+  }
+
   // Database health check method
   async checkDatabaseHealth(): Promise<boolean> {
     try {
@@ -328,21 +459,110 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       await this.eventModel.deleteMany({});
       console.log('🧹 Cleared all existing events');
       
-      // Create a new event starting in 5 minutes for testing
-      const startDate = new Date(Date.now() + 5 * 60 * 1000);
+      // Create a new event starting in 1 minute for testing
+      const startDate = new Date(Date.now() + 1 * 60 * 1000);
       await this.createEvent(
-        'Test Event - Lobby in 2 minutes', 
+        'Test Event - Lobby in 1 minute', 
         startDate, 
         5, 
         2
       );
-      console.log(`✅ Created test event starting at ${startDate}`);
+    
     } catch (error) {
-      console.error('❌ Error resetting events:', error);
+     
     }
   }
 
-  // Existing methods remain the same but with error handling
+  // Complete event method with automatic next event creation
+  async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
+    try {
+      console.log(`🏁 Completing event ${eventId} with winner: ${winnerPhone}`);
+      const result = await this.eventModel
+        .findByIdAndUpdate(
+          eventId,
+          { 
+            winner: winnerPhone, 
+            isCompleted: true,
+            completedAt: new Date(), // Ajouter l'heure de fin
+            nextEventCreated: false // Initialiser le flag
+          },
+          { new: true },
+        )
+        .exec();
+
+      if (result) {
+        console.log(`✅ Event completed successfully: ${result.theme} at ${result.completedAt}`);
+        
+        // Planifier la création du prochain événement après 1 minute
+        setTimeout(async () => {
+          try {
+            // Vérifier à nouveau si un quiz est actif
+            if (global.gatewayService && global.gatewayService.isGlobalQuizActivePublic && global.gatewayService.isGlobalQuizActivePublic()) {
+              console.log('🚫 Quiz in progress - postponing new event creation');
+              return;
+            }
+
+            const nextEventTime = new Date(result.completedAt.getTime() + 1 * 60 * 1000);
+            const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            })}`;
+
+            await this.createEvent(theme, nextEventTime, 5, 2);
+           
+            // Marquer l'événement comme ayant généré un nouvel événement
+            await this.eventModel.findByIdAndUpdate(
+              eventId,
+              { nextEventCreated: true }
+            ).exec();
+          } catch (error) {
+            
+          }
+        }, 1 * 60 * 1000);
+      } else {
+        console.log(`❌ Failed to complete event ${eventId}`);
+      }
+
+      this.isDatabaseConnected = true;
+      return result;
+    } catch (error) {
+      console.error('❌ Error completing event:', error);
+      this.handleDatabaseError(error);
+      throw error;
+    }
+  }
+
+  // Create event with new fields
+  async createEvent(
+    theme: string,
+    startDate: Date,
+    numberOfQuestions: number,
+    minPlayers: number = 2,
+  ): Promise<Event> {
+    try {
+      const event = new this.eventModel({
+        theme,
+        startDate,
+        numberOfQuestions,
+        minPlayers,
+        lobbyOpen: false,
+        isStarted: false,
+        isCompleted: false,
+        completedAt: null, // Initialiser comme null
+        nextEventCreated: false // Initialiser le flag
+      });
+      const result = await event.save();
+      this.isDatabaseConnected = true;
+      return result;
+    } catch (error) {
+      console.error('❌ Error creating event:', error);
+      this.handleDatabaseError(error);
+      throw error;
+    }
+  }
+
+  // Existing methods remain the same
   async getEventsInLobbyWindow(): Promise<Event[]> {
     try {
       const now = new Date();
@@ -359,61 +579,9 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         .sort({ startDate: 1 })
         .exec();
     } catch (error) {
-      console.error('❌ Error getting events in lobby window:', error);
+    
       this.handleDatabaseError(error);
       return [];
-    }
-  }
-
-  async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
-    try {
-      console.log(`🏁 Completing event ${eventId} with winner: ${winnerPhone}`);
-      const result = await this.eventModel
-        .findByIdAndUpdate(
-          eventId,
-          { winner: winnerPhone, isCompleted: true },
-          { new: true },
-        )
-        .exec();
-
-      if (result) {
-        console.log(`✅ Event completed successfully: ${result.theme}`);
-      } else {
-        console.log(`❌ Failed to complete event ${eventId}`);
-      }
-
-      this.isDatabaseConnected = true;
-      return result;
-    } catch (error) {
-      console.error('❌ Error completing event:', error);
-      this.handleDatabaseError(error);
-      throw error;
-    }
-  }
-
-  async createEvent(
-    theme: string,
-    startDate: Date,
-    numberOfQuestions: number,
-    minPlayers: number = 2,
-  ): Promise<Event> {
-    try {
-      const event = new this.eventModel({
-        theme,
-        startDate,
-        numberOfQuestions,
-        minPlayers,
-        lobbyOpen: false,
-        isStarted: false,
-        isCompleted: false,
-      });
-      const result = await event.save();
-      this.isDatabaseConnected = true;
-      return result;
-    } catch (error) {
-      console.error('❌ Error creating event:', error);
-      this.handleDatabaseError(error);
-      throw error;
     }
   }
 
@@ -476,13 +644,13 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   async getEventsReadyForLobby(): Promise<Event[]> {
     try {
       const now = new Date();
-      const threeMinutesFromNow = new Date(now.getTime() + 1 * 60 * 1000);
+      const oneMinuteFromNow = new Date(now.getTime() + 1 * 60 * 1000);
 
       const result = await this.eventModel
         .find({
           isCompleted: false,
           startDate: {
-            $lte: threeMinutesFromNow,
+            $lte: oneMinuteFromNow,
             $gt: now,
           },
           lobbyOpen: false,
