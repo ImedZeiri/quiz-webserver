@@ -61,15 +61,7 @@ export class GatewayController
 
   @SubscribeMessage('joinLobby')
   async handleJoinLobby(client: Socket) {
-    const userSession = this.gatewayService.getUserSession(client.id);
-    if (!userSession?.isAuthenticated) {
-      client.emit('error', {
-        message: 'Authentification requise pour rejoindre le lobby',
-        code: 'AUTH_REQUIRED_FOR_ONLINE',
-        requiredAction: 'LOGIN'
-      });
-      return;
-    }
+    
     
     this.gatewayService.joinLobby(client.id);
   }
@@ -101,15 +93,7 @@ export class GatewayController
 
   @SubscribeMessage('joinInProgress')
   async handleJoinInProgress(client: Socket) {
-    const userSession = this.gatewayService.getUserSession(client.id);
-    if (!userSession?.isAuthenticated) {
-      client.emit('error', {
-        message: 'Authentification requise pour rejoindre un événement en cours',
-        code: 'AUTH_REQUIRED_FOR_ONLINE',
-        requiredAction: 'LOGIN'
-      });
-      return;
-    }
+   
     
     this.gatewayService.joinOngoingEvent(client.id);
   }
@@ -146,18 +130,7 @@ export class GatewayController
       return;
     }
 
-    // Validation spéciale pour les modes nécessitant une authentification
-    if ((payload.mode === 'online' || (payload.mode === 'quiz' && !payload.isSolo))) {
-      const userSession = this.gatewayService.getUserSession(client.id);
-      if (!userSession?.isAuthenticated) {
-        client.emit('error', {
-          message: `Le mode ${payload.mode} nécessite une authentification. Veuillez vous connecter d'abord.`,
-          code: payload.mode === 'online' ? 'AUTH_REQUIRED_FOR_ONLINE' : 'AUTH_REQUIRED_FOR_MULTIPLAYER',
-          requiredAction: 'LOGIN'
-        });
-        return;
-      }
-    }
+
 
   /*   console.log(`📍 Demande de contexte reçue de ${client.id}: ${payload.mode}`, payload); */
     this.gatewayService.setUserContext(client.id, payload);

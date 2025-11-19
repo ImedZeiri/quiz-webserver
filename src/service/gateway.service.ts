@@ -741,7 +741,6 @@ private async checkPendingEvents() {
 
     session.pendingAnswer = { questionId: payload.questionId, answer: payload.answer };
     client?.emit('answerQueued', { questionId: payload.questionId, answer: payload.answer, timeLeft: session.timeLeft });
-    this.broadcastPlayerStats();
   }
 
   private handleGlobalTimeExpired() {
@@ -794,7 +793,7 @@ private async checkPendingEvents() {
         session.pendingAnswer = undefined;
       }
     });
-
+this.broadcastPlayerStats();
     this.globalQuiz.currentQuestionIndex++;
 
     if (this.globalQuiz.currentQuestionIndex >= this.globalQuiz.questions.length) {
@@ -1011,7 +1010,6 @@ private async checkPendingEvents() {
     }, 500); // Petit délai pour s'assurer que le client est prêt
 
     this.checkAndOpenLobbyIfNeeded();
-    this.broadcastPlayerStats();
     this.scheduleStatsBroadcast();
   }
 
@@ -1046,7 +1044,6 @@ private async checkPendingEvents() {
       this.broadcastLobbyUpdate();
     }
 
-    this.broadcastPlayerStats();
     this.scheduleStatsBroadcast();
   }
 
@@ -1706,7 +1703,6 @@ private async checkPendingEvents() {
     this.sendCurrentQuestion(client!, session);
     client?.emit('joinedInProgress', { mode: isWatching ? 'watch' : 'play' });
 
-    this.broadcastPlayerStats();
     this.broadcastUserStats();
   }
 
