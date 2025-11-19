@@ -1743,7 +1743,7 @@ private async checkAndOpenLobbyIfNeeded() {
       const lobbyTime = eventTime - 1 * 60 * 1000; // 3 minutes before
       
       if (now >= lobbyTime && now <= eventTime + 2 * 60 * 1000) {
-        console.log(`🔄 Auto-opening lobby for: ${event.theme}`);
+       
         await this.openEventLobby(event);
         break;
       }
