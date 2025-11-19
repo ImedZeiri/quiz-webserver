@@ -260,7 +260,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
           lobbyOpen: false,
           startDate: {
             $gte: new Date(now.getTime()),
-            $lte: new Date(now.getTime() + 3 * 60 * 1000),
+            $lte: new Date(now.getTime() + 1 * 60 * 1000),
           },
         })
         .exec();
@@ -269,7 +269,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         const timeUntilEvent = event.startDate.getTime() - now.getTime();
         
         // Open lobby if we're within the 3-minute window before event start
-        if (timeUntilEvent <= 3 * 60 * 1000 && timeUntilEvent > 0) {
+        if (timeUntilEvent <= 1 * 60 * 1000 && timeUntilEvent > 0) {
           // FIXED TYPE ISSUE - Safe ID access
           const eventId = event._id?.toString();
           if (eventId) {
@@ -476,7 +476,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   async getEventsReadyForLobby(): Promise<Event[]> {
     try {
       const now = new Date();
-      const threeMinutesFromNow = new Date(now.getTime() + 3 * 60 * 1000);
+      const threeMinutesFromNow = new Date(now.getTime() + 1 * 60 * 1000);
 
       const result = await this.eventModel
         .find({
@@ -544,7 +544,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
       let nextLobbyOpen: Date | null = null;
       if (nextEvent && !nextEvent.lobbyOpen) {
-        nextLobbyOpen = new Date(nextEvent.startDate.getTime() - 3 * 60 * 1000);
+        nextLobbyOpen = new Date(nextEvent.startDate.getTime() - 1 * 60 * 1000);
       }
 
       this.isDatabaseConnected = true;

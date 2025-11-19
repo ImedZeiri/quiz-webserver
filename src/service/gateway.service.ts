@@ -102,7 +102,7 @@ private initializeScheduling() {
     for (const event of eventsReady) {
       const now = Date.now();
       const eventTime = new Date(event.startDate).getTime();
-      const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes avant
+      const lobbyTime = eventTime - 1 * 60 * 1000; // 3 minutes avant
       const endTime = eventTime + 2 * 60 * 1000;
       
       if (now >= lobbyTime && now <= endTime) {
@@ -425,7 +425,7 @@ private handleGatewayError(error: any): void {
       this.destroyCurrentLobby('Événement modifié - recréation du lobby');
   
       const newEventTime = new Date(updatedEvent.startDate).getTime();
-      const newLobbyTime = newEventTime - 3 * 60 * 1000;
+      const newLobbyTime = newEventTime - 1 * 60 * 1000;
       const newEndTime = newEventTime + 2 * 60 * 1000;
   
       if (now >= newLobbyTime && now <= newEndTime) {
@@ -526,7 +526,7 @@ private scheduleEventCountdown(event: Event) {
   try {
     const now = Date.now();
     const eventTime = new Date(event.startDate).getTime();
-    const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes before
+    const lobbyTime = eventTime - 1 * 60 * 1000; // 3 minutes before
 
     if (now >= lobbyTime && !event.lobbyOpen) {
       this.openEventLobby(event);
@@ -553,7 +553,7 @@ private async checkPendingEvents() {
   for (const event of eventsReady) {
     const now = Date.now();
     const eventTime = new Date(event.startDate).getTime();
-    const lobbyTime = eventTime - 3 * 60 * 1000; // ✅ CONSISTENT: 3 minutes
+    const lobbyTime = eventTime - 1 * 60 * 1000; // ✅ CONSISTENT: 3 minutes
     if (now >= lobbyTime) {
       await this.openEventLobby(event);
       break;
@@ -1740,7 +1740,7 @@ private async checkAndOpenLobbyIfNeeded() {
     
     for (const event of activeEvents) {
       const eventTime = new Date(event.startDate).getTime();
-      const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes before
+      const lobbyTime = eventTime - 1 * 60 * 1000; // 3 minutes before
       
       if (now >= lobbyTime && now <= eventTime + 2 * 60 * 1000) {
         console.log(`🔄 Auto-opening lobby for: ${event.theme}`);
@@ -1839,7 +1839,7 @@ private async checkAndOpenLobbyIfNeeded() {
   
   for (const event of events) {
     const eventTime = new Date(event.startDate).getTime();
-    const lobbyTime = eventTime - 3 * 60 * 1000; // 3 minutes before
+    const lobbyTime = eventTime - 1 * 60 * 1000; // 3 minutes before
     const endTime = eventTime + 2 * 60 * 1000;
     const nowTime = now.getTime();
     
