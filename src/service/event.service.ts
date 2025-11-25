@@ -15,13 +15,14 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     private readonly eventModel: Model<Event>,
   ) {}
 
-  onModuleInit() {
-    console.log('🚀 EventService initializing...');
-    this.startEventScheduler();
-    this.startLobbyScheduler();
-    this.startEventCompletionChecker();
-    this.initializeEvents();
-  }
+ onModuleInit() {
+  console.log('🚀 EventService initializing...');
+  this.startEventScheduler();
+  this.startLobbyScheduler();
+  this.startEventCompletionChecker();
+  this.startCleanupScheduler(); // 🔥 NOUVEAU
+  this.initializeEvents();
+}
 
   onModuleDestroy() {
     console.log('🛑 EventService shutting down...');
@@ -66,10 +67,11 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         .exec();
 
       for (const completedEvent of recentlyCompletedEvents) {
-      
+        console.log(`🔄 Processing completed event: ${completedEvent.theme}`);
         
         // Vérifier si un quiz est actif
-        if (global.gatewayService && global.gatewayService.isGlobalQuizActivePublic && global.gatewayService.isGlobalQuizActivePublic()) {
+        const gatewayService = (global as any).gatewayService;
+        if (gatewayService && gatewayService.isGlobalQuizActivePublic && gatewayService.isGlobalQuizActivePublic()) {
           console.log('🚫 Quiz in progress - postponing new event creation');
           continue;
         }
@@ -91,17 +93,18 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         // Créer le nouvel événement
         await this.createEvent(theme, nextEventTime, 5, 2);
 
-
         // Marquer l'événement comme ayant généré un nouvel événement
         await this.eventModel.findByIdAndUpdate(
           completedEvent._id,
           { nextEventCreated: true }
         ).exec();
+
+        console.log(`✅ Created new event: ${theme} at ${nextEventTime}`);
       }
 
       this.isDatabaseConnected = true;
     } catch (error) {
-
+      console.error('❌ Error in checkCompletedEventsAndCreateNew:', error);
       this.handleDatabaseError(error);
     }
   }
@@ -200,7 +203,8 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       const now = new Date();
       
       // Check if a quiz is active via gateway service
-      if (global.gatewayService && global.gatewayService.isGlobalQuizActivePublic && global.gatewayService.isGlobalQuizActivePublic()) {
+      const gatewayService = (global as any).gatewayService;
+      if (gatewayService && gatewayService.isGlobalQuizActivePublic && gatewayService.isGlobalQuizActivePublic()) {
         console.log('🚫 Quiz in progress - postponing event creation');
         return;
       }
@@ -311,7 +315,8 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       const now = new Date();
       
       // Check if a quiz is active before creating a new event
-      if (global.gatewayService && global.gatewayService.isGlobalQuizActivePublic && global.gatewayService.isGlobalQuizActivePublic()) {
+      const gatewayService = (global as any).gatewayService;
+      if (gatewayService && gatewayService.isGlobalQuizActivePublic && gatewayService.isGlobalQuizActivePublic()) {
         console.log('🚫 Quiz in progress - cancelling event creation');
         return;
       }
@@ -433,7 +438,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         { nextEventCreated: false }
       ).exec();
       
-     
+      console.log('✅ Event schema updated for existing events');
     } catch (error) {
       console.error('❌ Error updating event schema:', error);
     }
@@ -467,71 +472,40 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         5, 
         2
       );
-    
+      console.log('✅ Created test event');
     } catch (error) {
-     
+      console.error('❌ Error resetting events:', error);
     }
   }
 
   // Complete event method with automatic next event creation
-  async completeEvent(eventId: string, winnerPhone: string): Promise<Event | null> {
-    try {
-      console.log(`🏁 Completing event ${eventId} with winner: ${winnerPhone}`);
-      const result = await this.eventModel
-        .findByIdAndUpdate(
-          eventId,
-          { 
-            winner: winnerPhone, 
-            isCompleted: true,
-            completedAt: new Date(), // Ajouter l'heure de fin
-            nextEventCreated: false // Initialiser le flag
-          },
-          { new: true },
-        )
-        .exec();
+ async completeEvent(eventId: string, winner: string): Promise<Event> {
+  try {
+    const result = await this.eventModel.findOneAndUpdate(
+      { _id: eventId },
+      { 
+        $set: { 
+          isCompleted: true,
+          winner: winner,
+          completedAt: new Date()
+        } 
+      },
+      { new: true }
+    ).exec();
 
-      if (result) {
-        console.log(`✅ Event completed successfully: ${result.theme} at ${result.completedAt}`);
-        
-        // Planifier la création du prochain événement après 1 minute
-        setTimeout(async () => {
-          try {
-            // Vérifier à nouveau si un quiz est actif
-            if (global.gatewayService && global.gatewayService.isGlobalQuizActivePublic && global.gatewayService.isGlobalQuizActivePublic()) {
-              console.log('🚫 Quiz in progress - postponing new event creation');
-              return;
-            }
-
-            const nextEventTime = new Date(result.completedAt.getTime() + 1 * 60 * 1000);
-            const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: false,
-            })}`;
-
-            await this.createEvent(theme, nextEventTime, 5, 2);
-           
-            // Marquer l'événement comme ayant généré un nouvel événement
-            await this.eventModel.findByIdAndUpdate(
-              eventId,
-              { nextEventCreated: true }
-            ).exec();
-          } catch (error) {
-            
-          }
-        }, 1 * 60 * 1000);
-      } else {
-        console.log(`❌ Failed to complete event ${eventId}`);
-      }
-
-      this.isDatabaseConnected = true;
-      return result;
-    } catch (error) {
-      console.error('❌ Error completing event:', error);
-      this.handleDatabaseError(error);
-      throw error;
+    if (!result) {
+      throw new Error(`Événement ${eventId} non trouvé`);
     }
+
+    console.log(`🏁 Événement ${result.theme} complété avec gagnant: ${winner}`);
+    return result;
+  } catch (error) {
+    console.error(`💾 Erreur base de données pour l'événement ${eventId}:`, error);
+    
+    // 🔥 CORRECTION: Relancer l'erreur pour que l'appelant puisse la gérer
+    throw error;
   }
+}
 
   // Create event with new fields
   async createEvent(
@@ -579,30 +553,76 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         .sort({ startDate: 1 })
         .exec();
     } catch (error) {
-    
+      console.error('❌ Error getting events in lobby window:', error);
       this.handleDatabaseError(error);
       return [];
     }
   }
 
-  async getNextEvent(): Promise<Event | null> {
-    try {
-      const now = new Date();
-      const result = await this.eventModel
-        .findOne({
-          isCompleted: false,
-          startDate: { $gt: now },
-        })
-        .sort({ startDate: 1 })
-        .exec();
-      this.isDatabaseConnected = true;
-      return result;
-    } catch (error) {
-      console.error('❌ Error getting next event:', error);
-      this.handleDatabaseError(error);
-      return null;
+  //  nettoyer les événements passés
+private async cleanupPastEvents(): Promise<void> {
+  try {
+    const now = new Date();
+    const pastEvents = await this.eventModel
+      .find({
+        isCompleted: false,
+        startDate: { $lte: now }
+      })
+      .exec();
+
+    for (const event of pastEvents) {
+      console.log(`🧹 Nettoyage événement passé: ${event.theme}`);
+      await this.eventModel.findByIdAndUpdate(
+        event._id,
+        { 
+          isCompleted: true,
+          completedAt: now,
+          nextEventCreated: false
+        }
+      ).exec();
     }
+
+    if (pastEvents.length > 0) {
+      console.log(`✅ ${pastEvents.length} événement(s) passé(s) nettoyé(s)`);
+    }
+  } catch (error) {
+    console.error('❌ Error cleaning up past events:', error);
   }
+}
+
+// Appeler cette méthode périodiquement
+private startCleanupScheduler(): void {
+  setInterval(async () => {
+    await this.cleanupPastEvents();
+  }, 30 * 1000); // Toutes les 30 secondes
+}
+
+ async getNextEvent(): Promise<Event | null> {
+  try {
+    const now = new Date();
+    const result = await this.eventModel
+      .findOne({
+        isCompleted: false,
+        startDate: { $gt: now }, // 🔥 S'assurer que c'est dans le futur
+      })
+      .sort({ startDate: 1 })
+      .exec();
+    
+    this.isDatabaseConnected = true;
+    
+    if (result) {
+      console.log(`📅 Prochain événement trouvé: ${result.theme} à ${result.startDate}`);
+    } else {
+      console.log('📅 Aucun prochain événement trouvé');
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('❌ Error getting next event:', error);
+    this.handleDatabaseError(error);
+    return null;
+  }
+}
 
   async openLobby(eventId: string): Promise<Event | null> {
     try {
