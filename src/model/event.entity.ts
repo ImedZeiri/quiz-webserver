@@ -38,11 +38,23 @@ export class Event extends Document {
 
   @Prop({ default: false, type: Boolean })
   nextEventCreated: boolean;
+
+  // 🔥 ADD: Created at timestamp for duplicate detection
+  @Prop({ default: Date.now })
+  createdAt: Date;
 }
 
 export const EventSchema = SchemaFactory.createForClass(Event);
 
-// Hook pour détecter les changements automatiquement
+// 🔥 ADD: Compound index to help prevent duplicates
+EventSchema.index({ 
+  startDate: 1, 
+  theme: 1 
+}, { 
+  name: 'prevent_duplicate_events'
+});
+
+// Existing hooks remain the same
 EventSchema.post('findOneAndUpdate', function(doc) {
   if (doc && global.gatewayService) {
     global.gatewayService.handleEventUpdated(doc);

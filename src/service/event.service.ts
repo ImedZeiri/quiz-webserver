@@ -8,21 +8,26 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   private eventSchedulerInterval: NodeJS.Timeout;
   private lobbySchedulerInterval: NodeJS.Timeout;
   private eventCompletionInterval: NodeJS.Timeout;
+  private cleanupSchedulerInterval: NodeJS.Timeout;
   private isDatabaseConnected = true;
+  private isScheduling = false;
 
   constructor(
     @InjectModel(Event.name)
     private readonly eventModel: Model<Event>,
   ) {}
 
- onModuleInit() {
-  console.log('🚀 EventService initializing...');
-  this.startEventScheduler();
-  this.startLobbyScheduler();
-  this.startEventCompletionChecker();
-  this.startCleanupScheduler(); // 🔥 NOUVEAU
-  this.initializeEvents();
-}
+  async onModuleInit() {
+    console.log('🚀 EventService initializing...');
+    
+    await this.cleanupDuplicateEvents();
+    
+    setTimeout(() => this.startEventScheduler(), 1000);
+    setTimeout(() => this.startLobbyScheduler(), 2000);
+    setTimeout(() => this.startEventCompletionChecker(), 3000);
+    setTimeout(() => this.startCleanupScheduler(), 4000);
+    setTimeout(() => this.initializeEvents(), 5000);
+  }
 
   onModuleDestroy() {
     console.log('🛑 EventService shutting down...');
@@ -35,187 +40,281 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     if (this.eventCompletionInterval) {
       clearInterval(this.eventCompletionInterval);
     }
+    if (this.cleanupSchedulerInterval) {
+      clearInterval(this.cleanupSchedulerInterval);
+    }
   }
 
-  private startEventCompletionChecker(): void {
-    // Vérifier toutes les 30 secondes les événements terminés
-    this.eventCompletionInterval = setInterval(async () => {
-      if (this.isDatabaseConnected) {
-        await this.checkCompletedEventsAndCreateNew();
-      }
-    }, 30 * 1000);
-
-    // Exécuter immédiatement au démarrage
-    this.checkCompletedEventsAndCreateNew();
-  }
-
-private async checkCompletedEventsAndCreateNew(): Promise<void> {
-  try {
-    const now = new Date();
+  private async withSchedulingLock<T>(operation: () => Promise<T>): Promise<T | null> {
+    if (this.isScheduling) {
+      console.log('⏳ Scheduling operation already in progress, skipping...');
+      return null;
+    }
     
-    const recentlyCompletedEvents = await this.eventModel
-      .find({
-        isCompleted: true,
-        completedAt: {
-          $gte: new Date(now.getTime() - 2 * 60 * 1000),
-          $lte: now
-        },
-        nextEventCreated: { $ne: true }
-      })
-      .sort({ completedAt: -1 })
-      .exec();
+    this.isScheduling = true;
+    try {
+      return await operation();
+    } catch (error) {
+      console.error('❌ Error in scheduled operation:', error);
+      return null;
+    } finally {
+      this.isScheduling = false;
+    }
+  }
 
-    for (const completedEvent of recentlyCompletedEvents) {
-      console.log(`🔄 Processing completed event: ${completedEvent.theme}`);
+  // 🔥 FIX: Proper TypeScript type handling for _id
+  private async cleanupDuplicateEvents(): Promise<void> {
+    try {
+      console.log('🧹 Checking for duplicate events...');
       
-      // 🔥 CORRECTION: Vérification de type sécurisée
-      if (!completedEvent.completedAt) {
-        console.log(`⚠️ Event ${completedEvent.theme} has null completedAt, skipping`);
-        continue;
-      }
+      const now = new Date();
+      const activeEvents = await this.eventModel.find({
+        isCompleted: false,
+        startDate: { $gte: now }
+      }).sort({ startDate: 1 }).exec();
+
+      const eventsToDelete = new Set<string>();
+      const seenTimes = new Set<number>();
       
-      const gatewayService = (global as any).gatewayService;
-      if (gatewayService?.isGlobalQuizActivePublic?.()) {
-        console.log('🚫 Quiz in progress - postponing new event creation');
-        continue;
+      for (const event of activeEvents) {
+        const eventTime = event.startDate.getTime();
+        const timeKey = Math.floor(eventTime / 60000);
+        
+        if (seenTimes.has(timeKey)) {
+          // 🔥 FIX: Proper _id access with type assertion
+          const eventId = (event._id as Types.ObjectId).toString();
+          eventsToDelete.add(eventId);
+          console.log(`🗑️ Marking duplicate for deletion: ${event.theme} at ${event.startDate}`);
+        } else {
+          seenTimes.add(timeKey);
+        }
       }
 
-      // 🔥 CORRECTION: Utilisation sécurisée de completedAt
-      const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
-      
-      if (nextEventTime.getTime() <= now.getTime()) {
-        nextEventTime.setTime(now.getTime() + 1 * 60 * 1000);
+      if (eventsToDelete.size > 0) {
+        const deleteIds = Array.from(eventsToDelete);
+        await this.eventModel.deleteMany({ _id: { $in: deleteIds } }).exec();
+        console.log(`✅ Deleted ${eventsToDelete.size} duplicate events`);
+      } else {
+        console.log('✅ No duplicate events found');
       }
+    } catch (error) {
+      console.error('❌ Error cleaning up duplicate events:', error);
+    }
+  }
 
-      const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
+  private async createEventAtomically(
+    startDate: Date,
+    numberOfQuestions: number = 5,
+    minPlayers: number = 2
+  ): Promise<Event | null> {
+    try {
+      const theme = `Auto Event - ${startDate.toLocaleTimeString('en-US', {
         hour: '2-digit',
         minute: '2-digit',
         hour12: false,
       })}`;
 
-      await this.createEvent(theme, nextEventTime, 5, 2);
-
-      await this.eventModel.findByIdAndUpdate(
-        completedEvent._id,
-        { nextEventCreated: true }
-      ).exec();
-
-      console.log(`✅ Created new event: ${theme} at ${nextEventTime}`);
-    }
-
-    this.isDatabaseConnected = true;
-  } catch (error) {
-    console.error('❌ Error in checkCompletedEventsAndCreateNew:', error);
-    this.handleDatabaseError(error);
-  }
-}
-
-private async initializeEvents(): Promise<void> {
-  try {
-    console.log('🚀 Initializing event schedule...');
-
-    await this.updateEventSchemaForExistingEvents();
-
-    const now = new Date();
-    const recentlyCompletedWithoutNextEvent = await this.eventModel
-      .find({
-        isCompleted: true,
-        completedAt: {
-          $gte: new Date(now.getTime() - 5 * 60 * 1000),
+      const existingEvent = await this.eventModel.findOne({
+        theme: { $regex: /^Auto Event -/ },
+        startDate: {
+          $gte: new Date(startDate.getTime() - 60000),
+          $lte: new Date(startDate.getTime() + 60000),
         },
-        nextEventCreated: false
-      })
-      .sort({ completedAt: -1 })
-      .exec();
+        isCompleted: false,
+      }).exec();
 
-    for (const completedEvent of recentlyCompletedWithoutNextEvent) {
-      // 🔥 CORRECTION: Vérification de type sécurisée
-      if (!completedEvent.completedAt) {
-        console.log(`⚠️ Event ${completedEvent.theme} has null completedAt, skipping`);
-        continue;
+      if (existingEvent) {
+        console.log(`⏭️ Event already exists at this time: ${existingEvent.theme}`);
+        return existingEvent;
       }
-      
-      const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
-      
-      if (nextEventTime.getTime() > now.getTime()) {
-        const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        })}`;
 
-        await this.createEvent(theme, nextEventTime, 5, 2);
-        console.log(`✅ Created event for recently completed: ${theme} at ${nextEventTime}`);
+      const event = new this.eventModel({
+        theme,
+        startDate,
+        numberOfQuestions,
+        minPlayers,
+        lobbyOpen: false,
+        isStarted: false,
+        isCompleted: false,
+        completedAt: null,
+        nextEventCreated: false
+      });
+
+      const result = await event.save();
+      console.log(`✅ Created new event: ${theme} at ${startDate}`);
+      return result;
+    } catch (error) {
+      if (error.code === 11000 || error.message?.includes('duplicate')) {
+        console.log(`⏭️ Event creation conflict, likely duplicate: ${error.message}`);
+        return null;
+      }
+      console.error('❌ Error creating event atomically:', error);
+      throw error;
+    }
+  }
+
+  private startEventCompletionChecker(): void {
+    this.eventCompletionInterval = setInterval(async () => {
+      await this.withSchedulingLock(() => this.checkCompletedEventsAndCreateNew());
+    }, 30 * 1000);
+
+    setTimeout(() => {
+      this.withSchedulingLock(() => this.checkCompletedEventsAndCreateNew());
+    }, 1000);
+  }
+
+  private async checkCompletedEventsAndCreateNew(): Promise<void> {
+    try {
+      const now = new Date();
+      
+      const recentlyCompletedEvents = await this.eventModel
+        .find({
+          isCompleted: true,
+          completedAt: {
+            $gte: new Date(now.getTime() - 2 * 60 * 1000),
+            $lte: now
+          },
+          nextEventCreated: { $ne: true }
+        })
+        .sort({ completedAt: -1 })
+        .exec();
+
+      for (const completedEvent of recentlyCompletedEvents) {
+        console.log(`🔄 Processing completed event: ${completedEvent.theme}`);
+        
+        if (!completedEvent.completedAt) {
+          console.log(`⚠️ Event ${completedEvent.theme} has null completedAt, skipping`);
+          continue;
+        }
+        
+        const gatewayService = (global as any).gatewayService;
+        if (gatewayService?.isGlobalQuizActivePublic?.()) {
+          console.log('🚫 Quiz in progress - postponing new event creation');
+          continue;
+        }
+
+        const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
+        
+        if (nextEventTime.getTime() <= now.getTime()) {
+          nextEventTime.setTime(now.getTime() + 1 * 60 * 1000);
+        }
+
+        await this.createEventAtomically(nextEventTime, 5, 2);
 
         await this.eventModel.findByIdAndUpdate(
           completedEvent._id,
           { nextEventCreated: true }
         ).exec();
+
+        console.log(`✅ Created new event for completed: ${completedEvent.theme}`);
       }
-    }
 
-    const upcomingEvents = await this.eventModel
-      .find({
-        isCompleted: false,
-        startDate: { $gt: new Date() },
-      })
-      .sort({ startDate: 1 })
-      .exec();
-
-    if (upcomingEvents.length === 0) {
-      await this.createNextEvent();
-      console.log('✅ Created initial event');
-    } else {
-      console.log(`⏭️ Found ${upcomingEvents.length} upcoming events`);
-      await this.fillEventSchedule();
+      this.isDatabaseConnected = true;
+    } catch (error) {
+      console.error('❌ Error in checkCompletedEventsAndCreateNew:', error);
+      this.handleDatabaseError(error);
     }
-    
-    this.isDatabaseConnected = true;
-  } catch (error) {
-    console.error('❌ Error initializing events:', error);
-    this.isDatabaseConnected = false;
-    setTimeout(() => this.initializeEvents(), 10000);
   }
-}
 
+  private async initializeEvents(): Promise<void> {
+    await this.withSchedulingLock(async () => {
+      try {
+        console.log('🚀 Initializing event schedule...');
 
+        await this.updateEventSchemaForExistingEvents();
+
+        const now = new Date();
+        const recentlyCompletedWithoutNextEvent = await this.eventModel
+          .find({
+            isCompleted: true,
+            completedAt: {
+              $gte: new Date(now.getTime() - 5 * 60 * 1000),
+            },
+            nextEventCreated: false
+          })
+          .sort({ completedAt: -1 })
+          .exec();
+
+        for (const completedEvent of recentlyCompletedWithoutNextEvent) {
+          if (!completedEvent.completedAt) {
+            console.log(`⚠️ Event ${completedEvent.theme} has null completedAt, skipping`);
+            continue;
+          }
+          
+          const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
+          
+          if (nextEventTime.getTime() > now.getTime()) {
+            await this.createEventAtomically(nextEventTime, 5, 2);
+            console.log(`✅ Created event for recently completed: ${completedEvent.theme} at ${nextEventTime}`);
+
+            await this.eventModel.findByIdAndUpdate(
+              completedEvent._id,
+              { nextEventCreated: true }
+            ).exec();
+          }
+        }
+
+        const upcomingEvents = await this.eventModel
+          .find({
+            isCompleted: false,
+            startDate: { $gt: new Date() },
+          })
+          .sort({ startDate: 1 })
+          .exec();
+
+        if (upcomingEvents.length === 0) {
+          await this.createNextEvent();
+          console.log('✅ Created initial event');
+        } else {
+          console.log(`⏭️ Found ${upcomingEvents.length} upcoming events`);
+          await this.fillEventSchedule();
+        }
+        
+        this.isDatabaseConnected = true;
+      } catch (error) {
+        console.error('❌ Error initializing events:', error);
+        this.isDatabaseConnected = false;
+        setTimeout(() => this.initializeEvents(), 10000);
+      }
+    });
+  }
 
   private startEventScheduler(): void {
-    // Check every minute for event scheduling needs
     this.eventSchedulerInterval = setInterval(async () => {
-      if (this.isDatabaseConnected) {
-        await this.checkEventSchedule();
-      }
+      await this.withSchedulingLock(() => this.checkEventSchedule());
     }, 60 * 1000);
 
-    // Run immediately on startup
-    this.checkEventSchedule();
+    setTimeout(() => {
+      this.withSchedulingLock(() => this.checkEventSchedule());
+    }, 2000);
   }
 
   private startLobbyScheduler(): void {
-    // Check every 30 seconds for lobbies that need to be opened
     this.lobbySchedulerInterval = setInterval(async () => {
       if (this.isDatabaseConnected) {
         await this.checkAndOpenLobbies();
       }
     }, 30 * 1000);
 
-    // Run immediately on startup
     this.checkAndOpenLobbies();
+  }
+
+  private startCleanupScheduler(): void {
+    this.cleanupSchedulerInterval = setInterval(async () => {
+      await this.cleanupPastEvents();
+    }, 30 * 1000);
   }
 
   private async checkEventSchedule(): Promise<void> {
     try {
       const now = new Date();
       
-      // Check if a quiz is active via gateway service
       const gatewayService = (global as any).gatewayService;
       if (gatewayService && gatewayService.isGlobalQuizActivePublic && gatewayService.isGlobalQuizActivePublic()) {
         console.log('🚫 Quiz in progress - postponing event creation');
         return;
       }
       
-      // Look for the last scheduled event
       const lastEvent = await this.eventModel
         .findOne({ isCompleted: false })
         .sort({ startDate: -1 })
@@ -226,7 +325,6 @@ private async initializeEvents(): Promise<void> {
         return;
       }
 
-      // Calculate time until next event should be created (1 minute interval)
       const timeSinceLastEvent = now.getTime() - lastEvent.startDate.getTime();
       const oneMinute = 1 * 60 * 1000;
 
@@ -243,70 +341,86 @@ private async initializeEvents(): Promise<void> {
     }
   }
 
+  // 🔥 FIX: Proper TypeScript type handling for _id comparisons
   private async fillEventSchedule(): Promise<void> {
     try {
       const now = new Date();
-      const lookAheadTime = 2 * 60 * 60 * 1000; // Look ahead 2 hours
+      const lookAheadTime = 2 * 60 * 60 * 1000;
       const targetTime = new Date(now.getTime() + lookAheadTime);
 
-      const lastEvent = await this.eventModel
-        .findOne({ isCompleted: false })
-        .sort({ startDate: -1 })
+      const upcomingEvents = await this.eventModel
+        .find({
+          isCompleted: false,
+          startDate: { $gte: now }
+        })
+        .sort({ startDate: 1 })
         .exec();
 
-      if (!lastEvent) {
-        await this.createNextEvent();
+      if (upcomingEvents.length === 0) {
+        const firstEventTime = new Date(now.getTime() + 1 * 60 * 1000);
+        await this.createEventAtomically(firstEventTime, 5, 2);
         return;
       }
 
-      let currentLastEvent = lastEvent;
-
-      while (currentLastEvent.startDate.getTime() < targetTime.getTime()) {
-        const nextEventTime = new Date(
-          currentLastEvent.startDate.getTime() + 1 * 60 * 1000,
-        );
-
-        // Check if event already exists at this time
-        const existingEvent = await this.eventModel
-          .findOne({
-            startDate: {
-              $gte: new Date(nextEventTime.getTime() - 1 * 60 * 1000),
-              $lte: new Date(nextEventTime.getTime() + 1 * 60 * 1000),
-            },
-            isCompleted: false,
-          })
-          .exec();
-
-        if (!existingEvent) {
-          const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          })}`;
-
-          await this.createEvent(theme, nextEventTime, 5, 2);
-          console.log(`✅ Scheduled event: ${theme} at ${nextEventTime}`);
+      let currentTime = new Date(upcomingEvents[0].startDate);
+      
+      for (let i = 0; i < upcomingEvents.length; i++) {
+        const event = upcomingEvents[i];
+        const eventTime = new Date(event.startDate);
+        
+        if (i === 0 && eventTime.getTime() > now.getTime() + 2 * 60 * 1000) {
+          const gapEventTime = new Date(now.getTime() + 1 * 60 * 1000);
+          await this.createEventAtomically(gapEventTime, 5, 2);
         }
 
-        // Update currentLastEvent for next iteration
+        if (i < upcomingEvents.length - 1) {
+          const nextEvent = upcomingEvents[i + 1];
+          const nextEventTime = new Date(nextEvent.startDate);
+          const gap = nextEventTime.getTime() - eventTime.getTime();
+          
+          if (gap > 2 * 60 * 1000) {
+            const gapEventTime = new Date(eventTime.getTime() + 1 * 60 * 1000);
+            await this.createEventAtomically(gapEventTime, 5, 2);
+          }
+        }
+      }
+
+      const lastEvent = upcomingEvents[upcomingEvents.length - 1];
+      let lastEventTime = new Date(lastEvent.startDate);
+      
+      while (lastEventTime.getTime() < targetTime.getTime() - 1 * 60 * 1000) {
+        const nextEventTime = new Date(lastEventTime.getTime() + 1 * 60 * 1000);
+        
+        const existing = await this.eventModel.findOne({
+          startDate: {
+            $gte: new Date(nextEventTime.getTime() - 30000),
+            $lte: new Date(nextEventTime.getTime() + 30000),
+          },
+          isCompleted: false
+        }).exec();
+
+        if (!existing) {
+          await this.createEventAtomically(nextEventTime, 5, 2);
+        }
+        
         const newLastEvent = await this.eventModel
           .findOne({ isCompleted: false })
           .sort({ startDate: -1 })
           .exec();
-
+          
+        // 🔥 FIX: Proper _id comparison with type assertions
         if (!newLastEvent) {
           break;
         }
 
-        // Safe type comparison using toString()
-        const newLastEventId = newLastEvent._id?.toString();
-        const currentLastEventId = currentLastEvent._id?.toString();
+        const newLastEventId = (newLastEvent._id as Types.ObjectId).toString();
+        const lastEventId = (lastEvent._id as Types.ObjectId).toString();
 
-        if (newLastEventId === currentLastEventId) {
+        if (newLastEventId === lastEventId) {
           break;
         }
-
-        currentLastEvent = newLastEvent;
+        
+        lastEventTime = new Date(newLastEvent.startDate);
       }
       
       this.isDatabaseConnected = true;
@@ -320,7 +434,6 @@ private async initializeEvents(): Promise<void> {
     try {
       const now = new Date();
       
-      // Check if a quiz is active before creating a new event
       const gatewayService = (global as any).gatewayService;
       if (gatewayService && gatewayService.isGlobalQuizActivePublic && gatewayService.isGlobalQuizActivePublic()) {
         console.log('🚫 Quiz in progress - cancelling event creation');
@@ -328,39 +441,28 @@ private async initializeEvents(): Promise<void> {
       }
       
       const lastEvent = await this.eventModel
-        .findOne()
+        .findOne({ isCompleted: false })
         .sort({ startDate: -1 })
         .exec();
 
       let nextEventTime: Date;
 
-      if (lastEvent && !lastEvent.isCompleted) {
-        // Schedule 1 minute after the last event
+      if (lastEvent) {
         nextEventTime = new Date(lastEvent.startDate.getTime() + 1 * 60 * 1000);
-
-        // If the calculated time is in the past, schedule for 1 minute from now
+        
         if (nextEventTime.getTime() <= now.getTime()) {
           nextEventTime = new Date(now.getTime() + 1 * 60 * 1000);
         }
       } else {
-        // No events or last event is completed, schedule for 1 minute from now
         nextEventTime = new Date(now.getTime() + 1 * 60 * 1000);
       }
 
-      // Ensure the event is at least 1 minute in the future
       const minTime = new Date(now.getTime() + 1 * 60 * 1000);
       if (nextEventTime.getTime() < minTime.getTime()) {
         nextEventTime = minTime;
       }
 
-      const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      })}`;
-
-      await this.createEvent(theme, nextEventTime, 5, 2);
-      console.log(`✅ Created next event: ${theme} at ${nextEventTime}`);
+      await this.createEventAtomically(nextEventTime, 5, 2);
       
       this.isDatabaseConnected = true;
     } catch (error) {
@@ -373,7 +475,6 @@ private async initializeEvents(): Promise<void> {
     try {
       const now = new Date();
       
-      // Find events that should have their lobby open now (1 minute before start)
       const eventsToOpen = await this.eventModel
         .find({
           isCompleted: false,
@@ -388,9 +489,8 @@ private async initializeEvents(): Promise<void> {
       for (const event of eventsToOpen) {
         const timeUntilEvent = event.startDate.getTime() - now.getTime();
         
-        // Open lobby if we're within the 1-minute window before event start
         if (timeUntilEvent <= 1 * 60 * 1000 && timeUntilEvent > 0) {
-          const eventId = event._id?.toString();
+          const eventId = (event._id as Types.ObjectId).toString();
           if (eventId) {
             await this.openLobby(eventId);
             console.log(
@@ -415,7 +515,6 @@ private async initializeEvents(): Promise<void> {
     console.error('💾 Database error:', error);
     this.isDatabaseConnected = false;
     
-    // Try to reconnect after 5 seconds
     setTimeout(async () => {
       try {
         await this.eventModel.findOne().exec();
@@ -429,7 +528,6 @@ private async initializeEvents(): Promise<void> {
 
   private async updateEventSchemaForExistingEvents(): Promise<void> {
     try {
-      // Mettre à jour les événements existants sans completedAt
       await this.eventModel.updateMany(
         { completedAt: { $exists: false }, isCompleted: true },
         { 
@@ -438,7 +536,6 @@ private async initializeEvents(): Promise<void> {
         }
       ).exec();
 
-      // Mettre à jour les événements existants sans nextEventCreated
       await this.eventModel.updateMany(
         { nextEventCreated: { $exists: false } },
         { nextEventCreated: false }
@@ -450,7 +547,6 @@ private async initializeEvents(): Promise<void> {
     }
   }
 
-  // Database health check method
   async checkDatabaseHealth(): Promise<boolean> {
     try {
       await this.eventModel.findOne().exec();
@@ -463,97 +559,64 @@ private async initializeEvents(): Promise<void> {
     }
   }
 
-  // Reset events for testing
   async resetEventsForTesting(): Promise<void> {
     try {
-      // Delete all existing events
       await this.eventModel.deleteMany({});
       console.log('🧹 Cleared all existing events');
       
-      // Create a new event starting in 1 minute for testing
       const startDate = new Date(Date.now() + 1 * 60 * 1000);
-      await this.createEvent(
-        'Test Event - Lobby in 1 minute', 
-        startDate, 
-        5, 
-        2
-      );
+      await this.createEventAtomically(startDate, 5, 2);
       console.log('✅ Created test event');
     } catch (error) {
       console.error('❌ Error resetting events:', error);
     }
   }
 
-  // Complete event method with automatic next event creation
-async completeEvent(eventId: string, winner: string): Promise<Event> {
-  try {
-    console.log(`🏆 Saving winner for event ${eventId}: ${winner}`);
-    
-    const result = await this.eventModel.findOneAndUpdate(
-      { _id: eventId },
-      { 
-        $set: { 
-          isCompleted: true,
-          winner: winner, // 🔥 CORRECTION: Bien sauvegarder le gagnant
-          completedAt: new Date()
-        } 
-      },
-      { 
-        new: true, 
-        runValidators: true // 🔥 AJOUT: Valider les champs
+  async completeEvent(eventId: string, winner: string): Promise<Event> {
+    try {
+      console.log(`🏆 Saving winner for event ${eventId}: ${winner}`);
+      
+      const result = await this.eventModel.findOneAndUpdate(
+        { _id: eventId },
+        { 
+          $set: { 
+            isCompleted: true,
+            winner: winner,
+            completedAt: new Date()
+          } 
+        },
+        { 
+          new: true, 
+          runValidators: true
+        }
+      ).exec();
+
+      if (!result) {
+        throw new Error(`Événement ${eventId} non trouvé`);
       }
-    ).exec();
 
-    if (!result) {
-      throw new Error(`Événement ${eventId} non trouvé`);
+      console.log(`✅ Event ${result.theme} completed with winner: ${winner}`);
+      
+      return result;
+    } catch (error) {
+      console.error(`💾 Database error for event ${eventId}:`, error);
+      throw error;
     }
-
-    console.log(`✅ Event ${result.theme} completed with winner: ${winner}`);
-    console.log(`📊 Event document after completion:`, {
-      id: result._id,
-      theme: result.theme,
-      winner: result.winner,
-      isCompleted: result.isCompleted,
-      completedAt: result.completedAt
-    });
-    
-    return result;
-  } catch (error) {
-    console.error(`💾 Database error for event ${eventId}:`, error);
-    throw error;
   }
-}
 
-  // Create event with new fields
   async createEvent(
     theme: string,
     startDate: Date,
     numberOfQuestions: number,
     minPlayers: number = 2,
   ): Promise<Event> {
-    try {
-      const event = new this.eventModel({
-        theme,
-        startDate,
-        numberOfQuestions,
-        minPlayers,
-        lobbyOpen: false,
-        isStarted: false,
-        isCompleted: false,
-        completedAt: null, // Initialiser comme null
-        nextEventCreated: false // Initialiser le flag
-      });
-      const result = await event.save();
-      this.isDatabaseConnected = true;
-      return result;
-    } catch (error) {
-      console.error('❌ Error creating event:', error);
-      this.handleDatabaseError(error);
-      throw error;
+    const event = await this.createEventAtomically(startDate, numberOfQuestions, minPlayers);
+    if (!event) {
+      throw new Error('Failed to create event - likely duplicate');
     }
+    return event;
   }
 
-  // Existing methods remain the same
   async getEventsInLobbyWindow(): Promise<Event[]> {
     try {
       const now = new Date();
@@ -576,83 +639,72 @@ async completeEvent(eventId: string, winner: string): Promise<Event> {
     }
   }
 
-
   private getSafeCompletedAt(completedEvent: Event): Date {
-  // 🔥 CORRECTION: Retourne une date sécurisée
-  if (completedEvent.completedAt) {
-    return completedEvent.completedAt;
-  }
-  
-  // Si completedAt est null, utiliser startDate + 2 minutes comme fallback
-  const fallbackDate = new Date(completedEvent.startDate.getTime() + 2 * 60 * 1000);
-  console.log(`⚠️ Using fallback completedAt for ${completedEvent.theme}: ${fallbackDate}`);
-  return fallbackDate;
-}
-
-  //  nettoyer les événements passés
-private async cleanupPastEvents(): Promise<void> {
-  try {
-    const now = new Date();
-    const pastEvents = await this.eventModel
-      .find({
-        isCompleted: false,
-        startDate: { $lte: now }
-      })
-      .exec();
-
-    for (const event of pastEvents) {
-      console.log(`🧹 Nettoyage événement passé: ${event.theme}`);
-      await this.eventModel.findByIdAndUpdate(
-        event._id,
-        { 
-          isCompleted: true,
-          completedAt: now, // 🔥 CORRECTION: Toujours définir completedAt
-          nextEventCreated: false
-        }
-      ).exec();
-    }
-
-    if (pastEvents.length > 0) {
-      console.log(`✅ ${pastEvents.length} événement(s) passé(s) nettoyé(s)`);
-    }
-  } catch (error) {
-    console.error('❌ Error cleaning up past events:', error);
-  }
-}
-
-// Appeler cette méthode périodiquement
-private startCleanupScheduler(): void {
-  setInterval(async () => {
-    await this.cleanupPastEvents();
-  }, 30 * 1000); // Toutes les 30 secondes
-}
-
- async getNextEvent(): Promise<Event | null> {
-  try {
-    const now = new Date();
-    const result = await this.eventModel
-      .findOne({
-        isCompleted: false,
-        startDate: { $gt: now }, // 🔥 S'assurer que c'est dans le futur
-      })
-      .sort({ startDate: 1 })
-      .exec();
-    
-    this.isDatabaseConnected = true;
-    
-    if (result) {
-      console.log(`📅 Prochain événement trouvé: ${result.theme} à ${result.startDate}`);
-    } else {
-      console.log('📅 Aucun prochain événement trouvé');
+    if (completedEvent.completedAt) {
+      return completedEvent.completedAt;
     }
     
-    return result;
-  } catch (error) {
-    console.error('❌ Error getting next event:', error);
-    this.handleDatabaseError(error);
-    return null;
+    const fallbackDate = new Date(completedEvent.startDate.getTime() + 2 * 60 * 1000);
+    console.log(`⚠️ Using fallback completedAt for ${completedEvent.theme}: ${fallbackDate}`);
+    return fallbackDate;
   }
-}
+
+  private async cleanupPastEvents(): Promise<void> {
+    try {
+      const now = new Date();
+      const pastEvents = await this.eventModel
+        .find({
+          isCompleted: false,
+          startDate: { $lte: now }
+        })
+        .exec();
+
+      for (const event of pastEvents) {
+        console.log(`🧹 Nettoyage événement passé: ${event.theme}`);
+        await this.eventModel.findByIdAndUpdate(
+          event._id,
+          { 
+            isCompleted: true,
+            completedAt: now,
+            nextEventCreated: false
+          }
+        ).exec();
+      }
+
+      if (pastEvents.length > 0) {
+        console.log(`✅ ${pastEvents.length} événement(s) passé(s) nettoyé(s)`);
+      }
+    } catch (error) {
+      console.error('❌ Error cleaning up past events:', error);
+    }
+  }
+
+  async getNextEvent(): Promise<Event | null> {
+    try {
+      const now = new Date();
+      const result = await this.eventModel
+        .findOne({
+          isCompleted: false,
+          startDate: { $gt: now },
+        })
+        .sort({ startDate: 1 })
+        .exec();
+      
+      this.isDatabaseConnected = true;
+      
+      if (result) {
+        console.log(`📅 Prochain événement trouvé: ${result.theme} à ${result.startDate}`);
+      } else {
+        console.log('📅 Aucun prochain événement trouvé');
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error getting next event:', error);
+      this.handleDatabaseError(error);
+      return null;
+    }
+  }
 
   async openLobby(eventId: string): Promise<Event | null> {
     try {
