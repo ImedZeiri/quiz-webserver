@@ -5,160 +5,81 @@ import { Event } from '../model/event.entity';
 
 @Injectable()
 export class EventService implements OnModuleInit, OnModuleDestroy {
-  private eventSchedulerInterval: NodeJS.Timeout | null = null;
-  private lobbySchedulerInterval: NodeJS.Timeout | null = null;
-  private eventCompletionInterval: NodeJS.Timeout | null = null;
+  private eventSchedulerInterval: NodeJS.Timeout;
+  private lobbySchedulerInterval: NodeJS.Timeout;
+  private eventCompletionInterval: NodeJS.Timeout;
   private isDatabaseConnected = true;
-
-  // 🔥 NEW: Event creation locking and throttling
-  private eventCreationLock = false;
-  private lastEventCreationTime = 0;
-  private readonly MIN_EVENT_CREATION_INTERVAL = 2000; // 2 seconds between event creations
-  private isSchedulerRunning = false;
-  private readonly MAX_EVENTS_PER_CYCLE = 3; // Maximum events to create in one cycle
 
   constructor(
     @InjectModel(Event.name)
     private readonly eventModel: Model<Event>,
   ) {}
 
-  onModuleInit() {
-    console.log('🚀 EventService initializing...');
-    
-    // 🔥 TEMPORARY: Start with safe mode to prevent flood
-    console.log('🛑 Starting in SAFE MODE to prevent event flood');
-    
-    this.startEventScheduler();
-    // Temporarily disable these to prevent conflicts
-    // this.startLobbyScheduler();
-    // this.startEventCompletionChecker();
-    this.startCleanupScheduler();
-    this.initializeEvents();
-  }
-
- onModuleDestroy() {
-  console.log('🛑 EventService shutting down...');
-  this.emergencyStopSchedulers();
+ onModuleInit() {
+  console.log('🚀 EventService initializing...');
+  this.startEventScheduler();
+  this.startLobbyScheduler();
+  this.startEventCompletionChecker();
+  this.startCleanupScheduler(); // 🔥 NOUVEAU
+  this.initializeEvents();
 }
 
-  // 🔥 NEW: Emergency stop method
-public emergencyStopSchedulers(): void {
-  console.log('🛑 EMERGENCY STOP: Stopping all event schedulers');
-  
-  if (this.eventSchedulerInterval) {
-    clearInterval(this.eventSchedulerInterval);
-    this.eventSchedulerInterval = null;
-  }
-  if (this.lobbySchedulerInterval) {
-    clearInterval(this.lobbySchedulerInterval);
-    this.lobbySchedulerInterval = null;
-  }
-  if (this.eventCompletionInterval) {
-    clearInterval(this.eventCompletionInterval);
-    this.eventCompletionInterval = null;
-  }
-  
- 
-}
-  // 🔥 NEW: Safe scheduler starter
- public startSchedulersSafely(): void {
-
-  
-  this.emergencyStopSchedulers(); // Stop first
-  
-  // Start with longer intervals
-  this.eventSchedulerInterval = setInterval(async () => {
-    if (this.isDatabaseConnected) {
-      await this.checkEventSchedule();
+  onModuleDestroy() {
+    console.log('🛑 EventService shutting down...');
+    if (this.eventSchedulerInterval) {
+      clearInterval(this.eventSchedulerInterval);
     }
-  }, 2 * 60 * 1000); // 2 minutes instead of 1
-
-  this.lobbySchedulerInterval = setInterval(async () => {
-    if (this.isDatabaseConnected) {
-      await this.checkAndOpenLobbies();
+    if (this.lobbySchedulerInterval) {
+      clearInterval(this.lobbySchedulerInterval);
     }
-  }, 60 * 1000); // 1 minute instead of 30 seconds
-
-  this.eventCompletionInterval = setInterval(async () => {
-    if (this.isDatabaseConnected) {
-      await this.checkCompletedEventsAndCreateNew();
+    if (this.eventCompletionInterval) {
+      clearInterval(this.eventCompletionInterval);
     }
-  }, 60 * 1000); // 1 minute instead of 30 seconds
-
- 
-}
-
-  // 🔥 NEW: Event creation locking mechanism
-  private async acquireEventCreationLock(): Promise<boolean> {
-    if (this.eventCreationLock) {
-    
-      return false;
-    }
-    
-    const now = Date.now();
-    if (now - this.lastEventCreationTime < this.MIN_EVENT_CREATION_INTERVAL) {
-      console.log('🚫 Event creation throttled - too frequent');
-      return false;
-    }
-    
-    this.eventCreationLock = true;
-    this.lastEventCreationTime = now;
-    return true;
-  }
-  
-  private releaseEventCreationLock(): void {
-    this.eventCreationLock = false;
   }
 
-private startEventCompletionChecker(): void {
-  // Vérifier toutes les 60 secondes les événements terminés (increased from 30s)
-  this.eventCompletionInterval = setInterval(async () => {
-    if (this.isDatabaseConnected) {
-      await this.checkCompletedEventsAndCreateNew();
-    }
-  }, 60 * 1000);
+  private startEventCompletionChecker(): void {
+    // Vérifier toutes les 30 secondes les événements terminés
+    this.eventCompletionInterval = setInterval(async () => {
+      if (this.isDatabaseConnected) {
+        await this.checkCompletedEventsAndCreateNew();
+      }
+    }, 30 * 1000);
 
-  // Exécuter immédiatement au démarrage
-  this.checkCompletedEventsAndCreateNew();
-}
+    // Exécuter immédiatement au démarrage
+    this.checkCompletedEventsAndCreateNew();
+  }
 
   private async checkCompletedEventsAndCreateNew(): Promise<void> {
-    if (!await this.acquireEventCreationLock()) {
-      return;
-    }
-
     try {
       const now = new Date();
       
-      // 🔥 IMPROVED: Only process a limited number of events
+      // Trouver les événements récemment terminés (dans la dernière minute)
       const recentlyCompletedEvents = await this.eventModel
         .find({
           isCompleted: true,
           completedAt: {
-            $gte: new Date(now.getTime() - 5 * 60 * 1000), // Extended to 5 minutes
+            $gte: new Date(now.getTime() - 2 * 60 * 1000), // Dans les 2 dernières minutes
             $lte: now
           },
-          nextEventCreated: { $ne: true }
+          nextEventCreated: { $ne: true } // Vérifier qu'un nouvel événement n'a pas déjà été créé
         })
         .sort({ completedAt: -1 })
-        .limit(3) // 🔥 LIMIT TO 3 EVENTS MAX
         .exec();
 
-      let eventsProcessed = 0;
       for (const completedEvent of recentlyCompletedEvents) {
-        if (eventsProcessed >= 2) break; // 🔥 SAFETY: Process max 2 events
+        console.log(`🔄 Processing completed event: ${completedEvent.theme}`);
         
-      
-        
-        // Check if quiz is active
+        // Vérifier si un quiz est actif
         const gatewayService = (global as any).gatewayService;
         if (gatewayService && gatewayService.isGlobalQuizActivePublic && gatewayService.isGlobalQuizActivePublic()) {
-        
+          console.log('🚫 Quiz in progress - postponing new event creation');
           continue;
         }
 
+        // Créer un nouvel événement 1 minute après la fin du précédent
         const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
         
+        // S'assurer que le nouvel événement est dans le futur
         if (nextEventTime.getTime() <= now.getTime()) {
           nextEventTime.setTime(now.getTime() + 1 * 60 * 1000);
         }
@@ -169,23 +90,22 @@ private startEventCompletionChecker(): void {
           hour12: false,
         })}`;
 
+        // Créer le nouvel événement
         await this.createEvent(theme, nextEventTime, 5, 2);
 
+        // Marquer l'événement comme ayant généré un nouvel événement
         await this.eventModel.findByIdAndUpdate(
           completedEvent._id,
           { nextEventCreated: true }
         ).exec();
 
-     
-        eventsProcessed++;
+        console.log(`✅ Created new event: ${theme} at ${nextEventTime}`);
       }
 
       this.isDatabaseConnected = true;
     } catch (error) {
       console.error('❌ Error in checkCompletedEventsAndCreateNew:', error);
       this.handleDatabaseError(error);
-    } finally {
-      this.releaseEventCreationLock();
     }
   }
 
@@ -195,6 +115,39 @@ private startEventCompletionChecker(): void {
 
       // Mettre à jour le schéma pour les événements existants
       await this.updateEventSchemaForExistingEvents();
+
+      // Vérifier les événements terminés récents qui n'ont pas généré de nouvel événement
+      const now = new Date();
+      const recentlyCompletedWithoutNextEvent = await this.eventModel
+        .find({
+          isCompleted: true,
+          completedAt: {
+            $gte: new Date(now.getTime() - 5 * 60 * 1000), // Dans les 5 dernières minutes
+          },
+          nextEventCreated: false
+        })
+        .sort({ completedAt: -1 })
+        .exec();
+
+      for (const completedEvent of recentlyCompletedWithoutNextEvent) {
+        const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
+        
+        if (nextEventTime.getTime() > now.getTime()) {
+          const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          })}`;
+
+          await this.createEvent(theme, nextEventTime, 5, 2);
+          console.log(`✅ Created event for recently completed: ${theme} at ${nextEventTime}`);
+
+          await this.eventModel.findByIdAndUpdate(
+            completedEvent._id,
+            { nextEventCreated: true }
+          ).exec();
+        }
+      }
 
       // Check for existing upcoming events
       const upcomingEvents = await this.eventModel
@@ -207,10 +160,10 @@ private startEventCompletionChecker(): void {
 
       if (upcomingEvents.length === 0) {
         await this.createNextEvent();
-      
+        console.log('✅ Created initial event');
       } else {
-    
-        // Don't fill schedule on startup to prevent flood
+        console.log(`⏭️ Found ${upcomingEvents.length} upcoming events`);
+        await this.fillEventSchedule();
       }
       
       this.isDatabaseConnected = true;
@@ -222,43 +175,31 @@ private startEventCompletionChecker(): void {
   }
 
   private startEventScheduler(): void {
-  // Check every 2 minutes for event scheduling needs (increased from 1 minute)
-  this.eventSchedulerInterval = setInterval(async () => {
-    if (this.isDatabaseConnected) {
-      await this.checkEventSchedule();
-    }
-  }, 2 * 60 * 1000);
+    // Check every minute for event scheduling needs
+    this.eventSchedulerInterval = setInterval(async () => {
+      if (this.isDatabaseConnected) {
+        await this.checkEventSchedule();
+      }
+    }, 60 * 1000);
 
-  // Run immediately on startup
-  this.checkEventSchedule();
-}
+    // Run immediately on startup
+    this.checkEventSchedule();
+  }
 
+  private startLobbyScheduler(): void {
+    // Check every 30 seconds for lobbies that need to be opened
+    this.lobbySchedulerInterval = setInterval(async () => {
+      if (this.isDatabaseConnected) {
+        await this.checkAndOpenLobbies();
+      }
+    }, 30 * 1000);
 
-private startLobbyScheduler(): void {
-  // Check every 60 seconds for lobbies that need to be opened (increased from 30 seconds)
-  this.lobbySchedulerInterval = setInterval(async () => {
-    if (this.isDatabaseConnected) {
-      await this.checkAndOpenLobbies();
-    }
-  }, 60 * 1000);
-
-  // Run immediately on startup
-  this.checkAndOpenLobbies();
-}
+    // Run immediately on startup
+    this.checkAndOpenLobbies();
+  }
 
   private async checkEventSchedule(): Promise<void> {
-    if (this.isSchedulerRunning) {
-      console.log('🚫 Event scheduler already running - skipping');
-      return;
-    }
-
-    if (!await this.acquireEventCreationLock()) {
-      return;
-    }
-
     try {
-      this.isSchedulerRunning = true;
-      
       const now = new Date();
       
       // Check if a quiz is active via gateway service
@@ -287,29 +228,19 @@ private startLobbyScheduler(): void {
         await this.createNextEvent();
       }
 
-      // Only fill schedule occasionally to prevent flood
-      if (Math.random() < 0.3) { // 30% chance to fill schedule
-        await this.fillEventSchedule();
-      }
+      await this.fillEventSchedule();
       
       this.isDatabaseConnected = true;
     } catch (error) {
       console.error('❌ Error checking event schedule:', error);
       this.handleDatabaseError(error);
-    } finally {
-      this.isSchedulerRunning = false;
-      this.releaseEventCreationLock();
     }
   }
 
   private async fillEventSchedule(): Promise<void> {
-    if (!await this.acquireEventCreationLock()) {
-      return;
-    }
-
     try {
       const now = new Date();
-      const lookAheadTime = 30 * 60 * 1000; // 🔥 REDUCE to 30 minutes only
+      const lookAheadTime = 2 * 60 * 60 * 1000; // Look ahead 2 hours
       const targetTime = new Date(now.getTime() + lookAheadTime);
 
       const lastEvent = await this.eventModel
@@ -318,20 +249,23 @@ private startLobbyScheduler(): void {
         .exec();
 
       if (!lastEvent) {
+        await this.createNextEvent();
         return;
       }
 
-      let nextEventTime = new Date(lastEvent.startDate.getTime() + 1 * 60 * 1000);
-      let eventsCreated = 0;
-      const MAX_EVENTS_TO_CREATE = 5; // 🔥 REDUCE to 5 events max
+      let currentLastEvent = lastEvent;
 
-      while (nextEventTime.getTime() < targetTime.getTime() && eventsCreated < MAX_EVENTS_TO_CREATE) {
-        // 🔥 IMPROVED DUPLICATE CHECK
+      while (currentLastEvent.startDate.getTime() < targetTime.getTime()) {
+        const nextEventTime = new Date(
+          currentLastEvent.startDate.getTime() + 1 * 60 * 1000,
+        );
+
+        // Check if event already exists at this time
         const existingEvent = await this.eventModel
           .findOne({
             startDate: {
-              $gte: new Date(nextEventTime.getTime() - 10 * 1000), // 10-second window
-              $lte: new Date(nextEventTime.getTime() + 10 * 1000),
+              $gte: new Date(nextEventTime.getTime() - 1 * 60 * 1000),
+              $lte: new Date(nextEventTime.getTime() + 1 * 60 * 1000),
             },
             isCompleted: false,
           })
@@ -345,39 +279,45 @@ private startLobbyScheduler(): void {
           })}`;
 
           await this.createEvent(theme, nextEventTime, 5, 2);
-       
-          eventsCreated++;
+          console.log(`✅ Scheduled event: ${theme} at ${nextEventTime}`);
         }
 
-        // Move to next time slot (1 minute later)
-        nextEventTime = new Date(nextEventTime.getTime() + 1 * 60 * 1000);
-      }
+        // Update currentLastEvent for next iteration
+        const newLastEvent = await this.eventModel
+          .findOne({ isCompleted: false })
+          .sort({ startDate: -1 })
+          .exec();
 
-      if (eventsCreated > 0) {
-     
+        if (!newLastEvent) {
+          break;
+        }
+
+        // Safe type comparison using toString()
+        const newLastEventId = newLastEvent._id?.toString();
+        const currentLastEventId = currentLastEvent._id?.toString();
+
+        if (newLastEventId === currentLastEventId) {
+          break;
+        }
+
+        currentLastEvent = newLastEvent;
       }
       
       this.isDatabaseConnected = true;
     } catch (error) {
       console.error('❌ Error filling event schedule:', error);
       this.handleDatabaseError(error);
-    } finally {
-      this.releaseEventCreationLock();
     }
   }
 
   private async createNextEvent(): Promise<void> {
-    if (!await this.acquireEventCreationLock()) {
-      return;
-    }
-
     try {
       const now = new Date();
       
       // Check if a quiz is active before creating a new event
       const gatewayService = (global as any).gatewayService;
       if (gatewayService && gatewayService.isGlobalQuizActivePublic && gatewayService.isGlobalQuizActivePublic()) {
- 
+        console.log('🚫 Quiz in progress - cancelling event creation');
         return;
       }
       
@@ -414,14 +354,12 @@ private startLobbyScheduler(): void {
       })}`;
 
       await this.createEvent(theme, nextEventTime, 5, 2);
-   
+      console.log(`✅ Created next event: ${theme} at ${nextEventTime}`);
       
       this.isDatabaseConnected = true;
     } catch (error) {
       console.error('❌ Error creating next event:', error);
       this.handleDatabaseError(error);
-    } finally {
-      this.releaseEventCreationLock();
     }
   }
 
@@ -449,13 +387,15 @@ private startLobbyScheduler(): void {
           const eventId = event._id?.toString();
           if (eventId) {
             await this.openLobby(eventId);
-           
+            console.log(
+              `🔓 Auto-opened lobby for event: "${event.theme}" starting in ${Math.round(timeUntilEvent / 1000)}s`
+            );
           }
         }
       }
 
       if (eventsToOpen.length > 0) {
-    
+        console.log(`✅ Opened ${eventsToOpen.length} lobby/lobbies`);
       }
       
       this.isDatabaseConnected = true;
@@ -504,40 +444,6 @@ private startLobbyScheduler(): void {
     }
   }
 
-  // 🔥 NEW: Emergency reset method
-  async emergencyReset(): Promise<void> {
-    try {
-      console.log('🚨 EMERGENCY RESET: Clearing all events');
-      
-      // Stop all schedulers first
-      this.emergencyStopSchedulers();
-      
-      // Delete all events
-      await this.eventModel.deleteMany({});
-      console.log('✅ All events deleted');
-      
-      // Wait a moment
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Create just one initial event
-      const startDate = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes from now
-      await this.createEvent(
-        'Initial Event - Reset', 
-        startDate, 
-        5, 
-        2
-      );
-      
-      console.log('✅ Single event created');
-      
-      // Start schedulers safely
-      this.startSchedulersSafely();
-      
-    } catch (error) {
-      console.error('❌ Emergency reset failed:', error);
-    }
-  }
-
   // Database health check method
   async checkDatabaseHealth(): Promise<boolean> {
     try {
@@ -556,7 +462,7 @@ private startLobbyScheduler(): void {
     try {
       // Delete all existing events
       await this.eventModel.deleteMany({});
-  
+      console.log('🧹 Cleared all existing events');
       
       // Create a new event starting in 1 minute for testing
       const startDate = new Date(Date.now() + 1 * 60 * 1000);
@@ -566,63 +472,48 @@ private startLobbyScheduler(): void {
         5, 
         2
       );
-    
+      console.log('✅ Created test event');
     } catch (error) {
       console.error('❌ Error resetting events:', error);
     }
   }
 
   // Complete event method with automatic next event creation
-  async completeEvent(eventId: string, winner: string): Promise<Event> {
-    try {
-      const result = await this.eventModel.findOneAndUpdate(
-        { _id: eventId },
-        { 
-          $set: { 
-            isCompleted: true,
-            winner: winner,
-            completedAt: new Date()
-          } 
-        },
-        { new: true }
-      ).exec();
+ async completeEvent(eventId: string, winner: string): Promise<Event> {
+  try {
+    const result = await this.eventModel.findOneAndUpdate(
+      { _id: eventId },
+      { 
+        $set: { 
+          isCompleted: true,
+          winner: winner,
+          completedAt: new Date()
+        } 
+      },
+      { new: true }
+    ).exec();
 
-      if (!result) {
-        throw new Error(`Événement ${eventId} non trouvé`);
-      }
-
-      console.log(`🏁 Événement ${result.theme} complété avec gagnant: ${winner}`);
-      return result;
-    } catch (error) {
-      console.error(`💾 Erreur base de données pour l'événement ${eventId}:`, error);
-      
-      // 🔥 CORRECTION: Relancer l'erreur pour que l'appelant puisse la gérer
-      throw error;
+    if (!result) {
+      throw new Error(`Événement ${eventId} non trouvé`);
     }
-  }
 
-  // Create event with new fields - UPDATED WITH DUPLICATE PROTECTION
+    console.log(`🏁 Événement ${result.theme} complété avec gagnant: ${winner}`);
+    return result;
+  } catch (error) {
+    console.error(`💾 Erreur base de données pour l'événement ${eventId}:`, error);
+    
+    // 🔥 CORRECTION: Relancer l'erreur pour que l'appelant puisse la gérer
+    throw error;
+  }
+}
+
+  // Create event with new fields
   async createEvent(
     theme: string,
     startDate: Date,
     numberOfQuestions: number,
     minPlayers: number = 2,
   ): Promise<Event> {
-    // 🔥 CHECK FOR DUPLICATES BEFORE CREATING
-    const existingEvent = await this.eventModel.findOne({
-      theme,
-      startDate: {
-        $gte: new Date(startDate.getTime() - 30 * 1000),
-        $lte: new Date(startDate.getTime() + 30 * 1000),
-      },
-      isCompleted: false
-    }).exec();
-
-    if (existingEvent) {
-    
-      return existingEvent;
-    }
-
     try {
       const event = new this.eventModel({
         theme,
@@ -632,14 +523,11 @@ private startLobbyScheduler(): void {
         lobbyOpen: false,
         isStarted: false,
         isCompleted: false,
-        completedAt: null,
-        nextEventCreated: false
+        completedAt: null, // Initialiser comme null
+        nextEventCreated: false // Initialiser le flag
       });
-      
       const result = await event.save();
       this.isDatabaseConnected = true;
-      
-      console.log(`🎯 Event created: ${theme} at ${startDate}`);
       return result;
     } catch (error) {
       console.error('❌ Error creating event:', error);
@@ -671,82 +559,82 @@ private startLobbyScheduler(): void {
     }
   }
 
-  // nettoyer les événements passés
-  private async cleanupPastEvents(): Promise<void> {
-    try {
-      const now = new Date();
-      const pastEvents = await this.eventModel
-        .find({
-          isCompleted: false,
-          startDate: { $lte: now }
-        })
-        .exec();
+  //  nettoyer les événements passés
+private async cleanupPastEvents(): Promise<void> {
+  try {
+    const now = new Date();
+    const pastEvents = await this.eventModel
+      .find({
+        isCompleted: false,
+        startDate: { $lte: now }
+      })
+      .exec();
 
-      for (const event of pastEvents) {
+    for (const event of pastEvents) {
+      console.log(`🧹 Nettoyage événement passé: ${event.theme}`);
+      await this.eventModel.findByIdAndUpdate(
+        event._id,
+        { 
+          isCompleted: true,
+          completedAt: now,
+          nextEventCreated: false
+        }
+      ).exec();
+    }
+
+    if (pastEvents.length > 0) {
+      console.log(`✅ ${pastEvents.length} événement(s) passé(s) nettoyé(s)`);
+    }
+  } catch (error) {
+    console.error('❌ Error cleaning up past events:', error);
+  }
+}
+
+// Appeler cette méthode périodiquement
+private startCleanupScheduler(): void {
+  setInterval(async () => {
+    await this.cleanupPastEvents();
+  }, 30 * 1000); // Toutes les 30 secondes
+}
+
+ async getNextEvent(): Promise<Event | null> {
+  try {
+    const now = new Date();
+    const result = await this.eventModel
+      .findOne({
+        isCompleted: false,
+        startDate: { $gt: now }, // 🔥 S'assurer que c'est dans le futur
+      })
+      .sort({ startDate: 1 })
+      .exec();
     
-        await this.eventModel.findByIdAndUpdate(
-          event._id,
-          { 
-            isCompleted: true,
-            completedAt: now,
-            nextEventCreated: false
-          }
-        ).exec();
-      }
-
-      if (pastEvents.length > 0) {
-      
-      }
-    } catch (error) {
-      console.error('❌ Error cleaning up past events:', error);
+    this.isDatabaseConnected = true;
+    
+    if (result) {
+      console.log(`📅 Prochain événement trouvé: ${result.theme} à ${result.startDate}`);
+    } else {
+      console.log('📅 Aucun prochain événement trouvé');
     }
+    
+    return result;
+  } catch (error) {
+    console.error('❌ Error getting next event:', error);
+    this.handleDatabaseError(error);
+    return null;
   }
-
-  // Appeler cette méthode périodiquement
-  private startCleanupScheduler(): void {
-    setInterval(async () => {
-      await this.cleanupPastEvents();
-    }, 30 * 1000); // Toutes les 30 secondes
-  }
-
-  async getNextEvent(): Promise<Event | null> {
-    try {
-      const now = new Date();
-      const result = await this.eventModel
-        .findOne({
-          isCompleted: false,
-          startDate: { $gt: now }, // 🔥 S'assurer que c'est dans le futur
-        })
-        .sort({ startDate: 1 })
-        .exec();
-      
-      this.isDatabaseConnected = true;
-      
-      if (result) {
-     
-      } else {
-  
-      }
-      
-      return result;
-    } catch (error) {
-      console.error('❌ Error getting next event:', error);
-      this.handleDatabaseError(error);
-      return null;
-    }
-  }
+}
 
   async openLobby(eventId: string): Promise<Event | null> {
     try {
-    
+      console.log(`🔓 Opening lobby for event ${eventId}`);
       const result = await this.eventModel
         .findByIdAndUpdate(eventId, { lobbyOpen: true }, { new: true })
         .exec();
 
       if (result) {
-     
+        console.log(`✅ Lobby opened successfully for: ${result.theme}`);
       } else {
-  
+        console.log(`❌ Failed to open lobby for event ${eventId}`);
       }
 
       this.isDatabaseConnected = true;
@@ -800,15 +688,15 @@ private startLobbyScheduler(): void {
 
   async startEvent(eventId: string): Promise<Event | null> {
     try {
-  
+      console.log(`🚀 Starting event ${eventId}`);
       const result = await this.eventModel
         .findByIdAndUpdate(eventId, { isStarted: true }, { new: true })
         .exec();
 
       if (result) {
-     
+        console.log(`✅ Event started successfully: ${result.theme}`);
       } else {
-    
+        console.log(`❌ Failed to start event ${eventId}`);
       }
 
       this.isDatabaseConnected = true;

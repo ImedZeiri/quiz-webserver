@@ -60,13 +60,6 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
   private countdownThrottleMap = new Map<string, number>();
   private lastCountdownBroadcast = 0;
 
-  // 🔥 NEW: Event deduplication and throttling
-  private lastProcessedEvents = new Map<string, { data: any; timestamp: number }>();
-  private lastEventBroadcasts = new Map<string, number>();
-  private eventUpdateQueue = new Map<string, NodeJS.Timeout>();
-  private readonly EVENT_DEDUPE_WINDOW = 1000; // 1 second
-  private readonly BROADCAST_THROTTLE_MS = 500; // 500ms between same event broadcasts
-
   private server: Server;
   private isInitialized = false;
 
@@ -117,67 +110,6 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
     console.log('🛑 GatewayService shutting down...');
     this.cleanupAllTimers();
     this.cleanupAllSessions();
-    
-    // 🔥 NEW: Cleanup event queues
-    this.eventUpdateQueue.forEach((timeout) => clearTimeout(timeout));
-    this.eventUpdateQueue.clear();
-  }
-
-  // ======================
-  // 🔥 NEW: Event Deduplication & Throttling Methods
-  // ======================
-
-  /**
-   * Check if we should process this event (deduplication)
-   */
-  private shouldProcessEvent(eventType: string, eventData: any): boolean {
-    const key = `${eventType}_${eventData.id}`;
-    const now = Date.now();
-    const lastEvent = this.lastProcessedEvents.get(key);
-    
-    // If we've seen this exact event recently, skip it
-    if (lastEvent && now - lastEvent.timestamp < this.EVENT_DEDUPE_WINDOW) {
-      const isSame = JSON.stringify(lastEvent.data) === JSON.stringify(eventData);
-      if (isSame) {
-      
-        return false;
-      }
-    }
-    
-    // Store this event for future deduplication
-    this.lastProcessedEvents.set(key, { data: eventData, timestamp: now });
-    
-    // Clean up old entries periodically
-    if (Math.random() < 0.01) { // 1% chance to cleanup
-      for (const [eventKey, value] of this.lastProcessedEvents.entries()) {
-        if (now - value.timestamp > 60000) { // 1 minute
-          this.lastProcessedEvents.delete(eventKey);
-        }
-      }
-    }
-    
-    return true;
-  }
-
-  /**
-   * Throttle event update broadcasts
-   */
-  private shouldBroadcastEventUpdate(eventId: string): boolean {
-    const now = Date.now();
-    const lastBroadcast = this.lastEventBroadcasts.get(eventId) || 0;
-    
-    if (now - lastBroadcast < this.BROADCAST_THROTTLE_MS) {
-      console.log(`🔄 Broadcast throttled for event: ${eventId}`);
-      return false;
-    }
-    
-    this.lastEventBroadcasts.set(eventId, now);
-    return true;
-  }
-  /**
-   * Log event source for debugging
-   */
-  private logEventSource(eventType: string, eventData: any, source: string) {
   }
 
   // ======================
@@ -490,7 +422,7 @@ export class GatewayService implements OnModuleInit, OnModuleDestroy {
 
 private async openEventLobby(event: Event) {
   if (this.currentLobby || this.isGlobalQuizActive()) {
-  
+    console.log(`⏭️ Lobby ou quiz déjà actif - pas d'ouverture pour ${event.theme}`);
     return;
   }
 
@@ -709,135 +641,111 @@ private async startEventIfReady() {
   }
 
   // ======================
-  // EVENTS - UPDATED WITH DEDUPLICATION
+  // EVENTS
   // ======================
 
   async handleEventUpdated(updatedEvent: Event) {
-    // 🔥 NEW: Add debouncing to prevent multiple rapid updates
-    const eventId = updatedEvent.id;
-    
-    // Clear any pending update for this event
-    if (this.eventUpdateQueue.has(eventId)) {
-      clearTimeout(this.eventUpdateQueue.get(eventId));
-    }
-    
-    // Queue the update with debounce
-    this.eventUpdateQueue.set(eventId, setTimeout(async () => {
-      this.eventUpdateQueue.delete(eventId);
-      await this.processEventUpdated(updatedEvent);
-    }, 100)); // 100ms debounce
+  console.log(`🔄 Événement modifié détecté: ${updatedEvent.theme}`);
+  const now = new Date().getTime();
+  const eventTime = new Date(updatedEvent.startDate).getTime();
+  const maxWindow = eventTime + 2 * 60 * 1000;
+
+  if (updatedEvent.isCompleted) {
+    console.log(`⏭️ Événement ${updatedEvent.theme} déjà terminé - ignoré`);
+    return;
   }
 
-  private async processEventUpdated(updatedEvent: Event) {
-    // 🔥 NEW: Add deduplication check
-    if (!this.shouldProcessEvent('eventUpdated', updatedEvent)) {
-      return;
-    }
-    
-    this.logEventSource('eventUpdated', updatedEvent, 'gateway');
-  
-    
-    const now = new Date().getTime();
-    const eventTime = new Date(updatedEvent.startDate).getTime();
-    const maxWindow = eventTime + 2 * 60 * 1000;
+  if (now > maxWindow && !updatedEvent.isCompleted) {
+    console.log(`⚠️ Événement ${updatedEvent.theme} expiré - suppression automatique`);
+    await this.eventService.updateEvent(updatedEvent.id, { isCompleted: true });
+    this.safeBroadcast('eventExpired', {
+      id: updatedEvent.id,
+      theme: updatedEvent.theme,
+    });
+    return;
+  }
 
-    if (updatedEvent.isCompleted) {
-    
-      return;
-    }
+  this.broadcastNextEvent(updatedEvent);
 
-    if (now > maxWindow && !updatedEvent.isCompleted) {
-    
-      await this.eventService.updateEvent(updatedEvent.id, { isCompleted: true });
-      this.safeBroadcast('eventExpired', {
-        id: updatedEvent.id,
-        theme: updatedEvent.theme,
-      });
-      return;
-    }
+  const timeUntilEvent = eventTime - now;
+  if (timeUntilEvent <= 0) {
+    console.log(`⏭️ Événement ${updatedEvent.theme} déjà passé - ignoré`);
+    return;
+  }
 
-    this.broadcastNextEvent(updatedEvent);
+  if (this.currentLobby && this.currentLobby.event.id === updatedEvent.id) {
+    console.log(`🔄 REMPLACEMENT du lobby existant`);
+    const currentParticipants = new Set(this.currentLobby.participants);
+    this.destroyCurrentLobby('Événement modifié - recréation du lobby');
 
-    const timeUntilEvent = eventTime - now;
-    if (timeUntilEvent <= 0) {
-   
-      return;
-    }
+    const newEventTime = new Date(updatedEvent.startDate).getTime();
+    const newLobbyTime = newEventTime - 1 * 60 * 1000;
+    const newEndTime = newEventTime + 2 * 60 * 1000;
 
-    if (this.currentLobby && this.currentLobby.event.id === updatedEvent.id) {
-     
-      const currentParticipants = new Set(this.currentLobby.participants);
-      this.destroyCurrentLobby('Événement modifié - recréation du lobby');
-
-      const newEventTime = new Date(updatedEvent.startDate).getTime();
-      const newLobbyTime = newEventTime - 1 * 60 * 1000;
-      const newEndTime = newEventTime + 2 * 60 * 1000;
-
-      if (now >= newLobbyTime && now <= newEndTime && timeUntilEvent > 0) {
-        this.currentLobby = {
-          event: updatedEvent,
-          participants: currentParticipants,
-          countdownTimer: undefined,
-          lobbyTimer: undefined,
-        };
-        if (!updatedEvent.lobbyOpen) {
-          await this.eventService.openLobby(updatedEvent.id);
-        }
-        this.startEventCountdown();
-        this.safeBroadcast('lobbyOpened', {
-          event: {
-            id: updatedEvent.id,
-            theme: updatedEvent.theme || 'Questions Aléatoires',
-            numberOfQuestions: updatedEvent.numberOfQuestions,
-            startDate: updatedEvent.startDate,
-            minPlayers: updatedEvent.minPlayers,
-          },
-          isRecreated: true,
-        });
-        this.safeBroadcast('lobbyStatus', { isOpen: true, event: updatedEvent });
-        const timeLeft = Math.max(0, Math.floor((newEventTime - now) / 1000));
-        
-        //  CORRECTION: Utiliser le throttling pour l'envoi du countdown
-        this.userSessions.forEach((session, clientId) => {
-          if (this.shouldReceiveEvent(clientId, 'eventCountdown') && this.shouldSendCountdown(clientId)) {
-            const client = this.server?.sockets.sockets.get(clientId);
-            client?.emit('eventCountdown', {
-              timeLeft,
-              participants: currentParticipants.size,
-              minPlayers: updatedEvent.minPlayers,
-            });
-          }
-        });
-      } else {
+    if (now >= newLobbyTime && now <= newEndTime && timeUntilEvent > 0) {
+      this.currentLobby = {
+        event: updatedEvent,
+        participants: currentParticipants,
+        countdownTimer: undefined,
+        lobbyTimer: undefined,
+      };
+      if (!updatedEvent.lobbyOpen) {
+        await this.eventService.openLobby(updatedEvent.id);
       }
-    } else if (!this.currentLobby && !this.isGlobalQuizActive()) {
-      const newEventTime = new Date(updatedEvent.startDate).getTime();
-      const newLobbyTime = newEventTime - 1 * 60 * 1000;
-      const newEndTime = newEventTime + 2 * 60 * 1000;
+      this.startEventCountdown();
+      this.safeBroadcast('lobbyOpened', {
+        event: {
+          id: updatedEvent.id,
+          theme: updatedEvent.theme || 'Questions Aléatoires',
+          numberOfQuestions: updatedEvent.numberOfQuestions,
+          startDate: updatedEvent.startDate,
+          minPlayers: updatedEvent.minPlayers,
+        },
+        isRecreated: true,
+      });
+      this.safeBroadcast('lobbyStatus', { isOpen: true, event: updatedEvent });
+      const timeLeft = Math.max(0, Math.floor((newEventTime - now) / 1000));
       
-      const timeUntilEvent = newEventTime - now;
-      if (now >= newLobbyTime && now <= newEndTime && timeUntilEvent > 0) {
-        console.log(`🚀 Ouverture d'un nouveau lobby suite à la modification`);
-        await this.openEventLobby(updatedEvent);
-      } else {
-    
-      }
-    }
-
-    // 🔥 NEW: Add broadcast throttling
-    if (this.shouldBroadcastEventUpdate(updatedEvent.id)) {
-      this.safeBroadcast('eventUpdated', {
-        id: updatedEvent.id,
-        theme: updatedEvent.theme,
-        startDate: updatedEvent.startDate,
-        numberOfQuestions: updatedEvent.numberOfQuestions,
-        minPlayers: updatedEvent.minPlayers,
+      // 🔥 CORRECTION: Utiliser le throttling pour l'envoi du countdown
+      this.userSessions.forEach((session, clientId) => {
+        if (this.shouldReceiveEvent(clientId, 'eventCountdown') && this.shouldSendCountdown(clientId)) {
+          const client = this.server?.sockets.sockets.get(clientId);
+          client?.emit('eventCountdown', {
+            timeLeft,
+            participants: currentParticipants.size,
+            minPlayers: updatedEvent.minPlayers,
+          });
+        }
       });
+      console.log(`✅ NOUVEAU lobby créé avec ${currentParticipants.size} participants`);
+    } else {
+      console.log(`❌ Nouveau timing invalide - lobby détruit sans recréation`);
+    }
+  } else if (!this.currentLobby && !this.isGlobalQuizActive()) {
+    const newEventTime = new Date(updatedEvent.startDate).getTime();
+    const newLobbyTime = newEventTime - 1 * 60 * 1000;
+    const newEndTime = newEventTime + 2 * 60 * 1000;
+    
+    const timeUntilEvent = newEventTime - now;
+    if (now >= newLobbyTime && now <= newEndTime && timeUntilEvent > 0) {
+      console.log(`🚀 Ouverture d'un nouveau lobby suite à la modification`);
+      await this.openEventLobby(updatedEvent);
+    } else {
+      console.log(`⏭️ Événement ${updatedEvent.theme} hors fenêtre - pas d'ouverture auto`);
     }
   }
+
+  this.safeBroadcast('eventUpdated', {
+    id: updatedEvent.id,
+    theme: updatedEvent.theme,
+    startDate: updatedEvent.startDate,
+    numberOfQuestions: updatedEvent.numberOfQuestions,
+    minPlayers: updatedEvent.minPlayers,
+  });
+}
 
   async handleEventDeleted(eventId: string) {
-  
+    console.log(`🗑️ Événement supprimé détecté: ${eventId}`);
     if (this.currentLobby?.event.id === eventId) {
       this.destroyCurrentLobby('Événement supprimé');
     }
@@ -952,6 +860,8 @@ private broadcastNextEvent(event: Event) {
         clearTimeout(this.globalQuiz.timer);
         this.globalQuiz.timer = undefined;
       }
+      
+      console.log('🧹 GlobalQuiz nettoyé');
     }
     this.globalQuiz = null;
   }
@@ -1275,6 +1185,7 @@ private async completeGlobalQuiz() {
         } else {
           await this.eventService.completeEvent(event.id, winnerSessionId);
         }
+        console.log(`✅ Événement ${event.theme} complété avec gagnant: ${winnerUsername || winnerSessionId}`);
       } catch (error) {
         console.error(`❌ Erreur lors de la complétion de l'événement ${event.theme}:`, error);
         // 🔥 CORRECTION: On continue même si la base de données échoue
@@ -1457,7 +1368,7 @@ handleConnection(clientId: string) {
     lastActivity: new Date(),
   });
 
- 
+  console.log(`✅ Session créée pour ${clientId}, total sessions: ${this.userSessions.size}`);
 
   setTimeout(() => {
     this.sendInitialDataToClient(clientId);
@@ -1689,6 +1600,8 @@ handleDisconnection(clientId: string, reason?: string) {
         this.broadcastLobbyUpdate();
       }
     }
+    
+    console.log(`🧹 Contexte précédent nettoyé pour ${clientId}: ${previousContext.mode}`);
   }
 
   private getContextSubscriptions(mode: 'home' | 'solo' | 'online' | 'quiz', payload: any): { event: string; enabled: boolean; }[] {
@@ -2179,7 +2092,7 @@ handleDisconnection(clientId: string, reason?: string) {
       const lobbyTime = eventTime - 1 * 60 * 1000;
       
       if (eventTime <= now) {
-       
+        console.log(`⏭️ Événement ${event.theme} déjà passé - ignoré dans checkAndOpenLobbyIfNeeded`);
         continue;
       }
       
@@ -2211,6 +2124,7 @@ handleDisconnection(clientId: string, reason?: string) {
     const currentStatus = this.getCurrentLobbyStatus();
     
     if (!this.lastLobbyStatus || JSON.stringify(currentStatus) !== JSON.stringify(this.lastLobbyStatus)) {
+      console.log('📡 Diffusion automatique du statut du lobby:', currentStatus);
       
       this.userSessions.forEach((session, clientId) => {
         if (this.shouldReceiveEvent(clientId, 'lobbyStatus')) {
@@ -2346,6 +2260,7 @@ handleDisconnection(clientId: string, reason?: string) {
   }
 
   async forceEventUpdate(eventId: string) {
+    console.log(`🔄 MISE À JOUR FORCÉE DE L'ÉVÉNEMENT: ${eventId}`);
     if (this.currentLobby && this.currentLobby.event.id === eventId) {
       this.destroyCurrentLobby("Mise à jour forcée de l'événement");
     }
@@ -2462,6 +2377,7 @@ handleDisconnection(clientId: string, reason?: string) {
   }
 
   private sendInitialDataToClient(clientId: string): void {
+    console.log(`📡 Envoi des données initiales au client ${clientId}`);
     
     const client = this.server?.sockets.sockets.get(clientId);
     if (!client) return;
