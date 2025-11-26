@@ -1,36 +1,42 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 @Schema()
 export class Event extends Document {
-  @Prop({ required: true })
+  @Prop({ required: true, type: String })
   theme: string;
 
-  @Prop({ required: true })
+  @Prop({ required: true, type: Date })
   startDate: Date;
 
-  @Prop({ required: true })
+  @Prop({ required: true, type: Number })
   numberOfQuestions: number;
 
-  @Prop()
-  winner?: string;
+  @Prop({ 
+    type: String, 
+    default: null 
+  })
+  winner: string;
 
-  @Prop({ default: false })
+  @Prop({ default: false, type: Boolean })
   isCompleted: boolean;
 
-  @Prop({ default: 2 })
+  @Prop({ default: 2, type: Number })
   minPlayers: number;
 
-  @Prop({ default: false })
+  @Prop({ default: false, type: Boolean })
   lobbyOpen: boolean;
 
-  @Prop({ default: false })
+  @Prop({ default: false, type: Boolean })
   isStarted: boolean;
 
-    @Prop()
-  completedAt: Date; // Heure à laquelle l'événement s'est terminé
+  @Prop({ 
+    type: Date, 
+    default: null 
+  })
+  completedAt: Date;
 
-  @Prop({ default: false })
+  @Prop({ default: false, type: Boolean })
   nextEventCreated: boolean;
 }
 

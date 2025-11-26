@@ -49,130 +49,136 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     this.checkCompletedEventsAndCreateNew();
   }
 
-  private async checkCompletedEventsAndCreateNew(): Promise<void> {
-    try {
-      const now = new Date();
+private async checkCompletedEventsAndCreateNew(): Promise<void> {
+  try {
+    const now = new Date();
+    
+    const recentlyCompletedEvents = await this.eventModel
+      .find({
+        isCompleted: true,
+        completedAt: {
+          $gte: new Date(now.getTime() - 2 * 60 * 1000),
+          $lte: now
+        },
+        nextEventCreated: { $ne: true }
+      })
+      .sort({ completedAt: -1 })
+      .exec();
+
+    for (const completedEvent of recentlyCompletedEvents) {
+      console.log(`🔄 Processing completed event: ${completedEvent.theme}`);
       
-      // Trouver les événements récemment terminés (dans la dernière minute)
-      const recentlyCompletedEvents = await this.eventModel
-        .find({
-          isCompleted: true,
-          completedAt: {
-            $gte: new Date(now.getTime() - 2 * 60 * 1000), // Dans les 2 dernières minutes
-            $lte: now
-          },
-          nextEventCreated: { $ne: true } // Vérifier qu'un nouvel événement n'a pas déjà été créé
-        })
-        .sort({ completedAt: -1 })
-        .exec();
+      // 🔥 CORRECTION: Vérification de type sécurisée
+      if (!completedEvent.completedAt) {
+        console.log(`⚠️ Event ${completedEvent.theme} has null completedAt, skipping`);
+        continue;
+      }
+      
+      const gatewayService = (global as any).gatewayService;
+      if (gatewayService?.isGlobalQuizActivePublic?.()) {
+        console.log('🚫 Quiz in progress - postponing new event creation');
+        continue;
+      }
 
-      for (const completedEvent of recentlyCompletedEvents) {
-        console.log(`🔄 Processing completed event: ${completedEvent.theme}`);
-        
-        // Vérifier si un quiz est actif
-        const gatewayService = (global as any).gatewayService;
-        if (gatewayService && gatewayService.isGlobalQuizActivePublic && gatewayService.isGlobalQuizActivePublic()) {
-          console.log('🚫 Quiz in progress - postponing new event creation');
-          continue;
-        }
+      // 🔥 CORRECTION: Utilisation sécurisée de completedAt
+      const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
+      
+      if (nextEventTime.getTime() <= now.getTime()) {
+        nextEventTime.setTime(now.getTime() + 1 * 60 * 1000);
+      }
 
-        // Créer un nouvel événement 1 minute après la fin du précédent
-        const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
-        
-        // S'assurer que le nouvel événement est dans le futur
-        if (nextEventTime.getTime() <= now.getTime()) {
-          nextEventTime.setTime(now.getTime() + 1 * 60 * 1000);
-        }
+      const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })}`;
 
+      await this.createEvent(theme, nextEventTime, 5, 2);
+
+      await this.eventModel.findByIdAndUpdate(
+        completedEvent._id,
+        { nextEventCreated: true }
+      ).exec();
+
+      console.log(`✅ Created new event: ${theme} at ${nextEventTime}`);
+    }
+
+    this.isDatabaseConnected = true;
+  } catch (error) {
+    console.error('❌ Error in checkCompletedEventsAndCreateNew:', error);
+    this.handleDatabaseError(error);
+  }
+}
+
+private async initializeEvents(): Promise<void> {
+  try {
+    console.log('🚀 Initializing event schedule...');
+
+    await this.updateEventSchemaForExistingEvents();
+
+    const now = new Date();
+    const recentlyCompletedWithoutNextEvent = await this.eventModel
+      .find({
+        isCompleted: true,
+        completedAt: {
+          $gte: new Date(now.getTime() - 5 * 60 * 1000),
+        },
+        nextEventCreated: false
+      })
+      .sort({ completedAt: -1 })
+      .exec();
+
+    for (const completedEvent of recentlyCompletedWithoutNextEvent) {
+      // 🔥 CORRECTION: Vérification de type sécurisée
+      if (!completedEvent.completedAt) {
+        console.log(`⚠️ Event ${completedEvent.theme} has null completedAt, skipping`);
+        continue;
+      }
+      
+      const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
+      
+      if (nextEventTime.getTime() > now.getTime()) {
         const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
           hour: '2-digit',
           minute: '2-digit',
           hour12: false,
         })}`;
 
-        // Créer le nouvel événement
         await this.createEvent(theme, nextEventTime, 5, 2);
+        console.log(`✅ Created event for recently completed: ${theme} at ${nextEventTime}`);
 
-        // Marquer l'événement comme ayant généré un nouvel événement
         await this.eventModel.findByIdAndUpdate(
           completedEvent._id,
           { nextEventCreated: true }
         ).exec();
-
-        console.log(`✅ Created new event: ${theme} at ${nextEventTime}`);
       }
-
-      this.isDatabaseConnected = true;
-    } catch (error) {
-      console.error('❌ Error in checkCompletedEventsAndCreateNew:', error);
-      this.handleDatabaseError(error);
     }
-  }
 
-  private async initializeEvents(): Promise<void> {
-    try {
-      console.log('🚀 Initializing event schedule...');
+    const upcomingEvents = await this.eventModel
+      .find({
+        isCompleted: false,
+        startDate: { $gt: new Date() },
+      })
+      .sort({ startDate: 1 })
+      .exec();
 
-      // Mettre à jour le schéma pour les événements existants
-      await this.updateEventSchemaForExistingEvents();
-
-      // Vérifier les événements terminés récents qui n'ont pas généré de nouvel événement
-      const now = new Date();
-      const recentlyCompletedWithoutNextEvent = await this.eventModel
-        .find({
-          isCompleted: true,
-          completedAt: {
-            $gte: new Date(now.getTime() - 5 * 60 * 1000), // Dans les 5 dernières minutes
-          },
-          nextEventCreated: false
-        })
-        .sort({ completedAt: -1 })
-        .exec();
-
-      for (const completedEvent of recentlyCompletedWithoutNextEvent) {
-        const nextEventTime = new Date(completedEvent.completedAt.getTime() + 1 * 60 * 1000);
-        
-        if (nextEventTime.getTime() > now.getTime()) {
-          const theme = `Auto Event - ${nextEventTime.toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          })}`;
-
-          await this.createEvent(theme, nextEventTime, 5, 2);
-          console.log(`✅ Created event for recently completed: ${theme} at ${nextEventTime}`);
-
-          await this.eventModel.findByIdAndUpdate(
-            completedEvent._id,
-            { nextEventCreated: true }
-          ).exec();
-        }
-      }
-
-      // Check for existing upcoming events
-      const upcomingEvents = await this.eventModel
-        .find({
-          isCompleted: false,
-          startDate: { $gt: new Date() },
-        })
-        .sort({ startDate: 1 })
-        .exec();
-
-      if (upcomingEvents.length === 0) {
-        await this.createNextEvent();
-        console.log('✅ Created initial event');
-      } else {
-        console.log(`⏭️ Found ${upcomingEvents.length} upcoming events`);
-        await this.fillEventSchedule();
-      }
-      
-      this.isDatabaseConnected = true;
-    } catch (error) {
-      console.error('❌ Error initializing events:', error);
-      this.isDatabaseConnected = false;
-      setTimeout(() => this.initializeEvents(), 10000);
+    if (upcomingEvents.length === 0) {
+      await this.createNextEvent();
+      console.log('✅ Created initial event');
+    } else {
+      console.log(`⏭️ Found ${upcomingEvents.length} upcoming events`);
+      await this.fillEventSchedule();
     }
+    
+    this.isDatabaseConnected = true;
+  } catch (error) {
+    console.error('❌ Error initializing events:', error);
+    this.isDatabaseConnected = false;
+    setTimeout(() => this.initializeEvents(), 10000);
   }
+}
+
+
 
   private startEventScheduler(): void {
     // Check every minute for event scheduling needs
@@ -479,30 +485,41 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Complete event method with automatic next event creation
- async completeEvent(eventId: string, winner: string): Promise<Event> {
+async completeEvent(eventId: string, winner: string): Promise<Event> {
   try {
+    console.log(`🏆 Saving winner for event ${eventId}: ${winner}`);
+    
     const result = await this.eventModel.findOneAndUpdate(
       { _id: eventId },
       { 
         $set: { 
           isCompleted: true,
-          winner: winner,
+          winner: winner, // 🔥 CORRECTION: Bien sauvegarder le gagnant
           completedAt: new Date()
         } 
       },
-      { new: true }
+      { 
+        new: true, 
+        runValidators: true // 🔥 AJOUT: Valider les champs
+      }
     ).exec();
 
     if (!result) {
       throw new Error(`Événement ${eventId} non trouvé`);
     }
 
-    console.log(`🏁 Événement ${result.theme} complété avec gagnant: ${winner}`);
+    console.log(`✅ Event ${result.theme} completed with winner: ${winner}`);
+    console.log(`📊 Event document after completion:`, {
+      id: result._id,
+      theme: result.theme,
+      winner: result.winner,
+      isCompleted: result.isCompleted,
+      completedAt: result.completedAt
+    });
+    
     return result;
   } catch (error) {
-    console.error(`💾 Erreur base de données pour l'événement ${eventId}:`, error);
-    
-    // 🔥 CORRECTION: Relancer l'erreur pour que l'appelant puisse la gérer
+    console.error(`💾 Database error for event ${eventId}:`, error);
     throw error;
   }
 }
@@ -559,6 +576,19 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+
+  private getSafeCompletedAt(completedEvent: Event): Date {
+  // 🔥 CORRECTION: Retourne une date sécurisée
+  if (completedEvent.completedAt) {
+    return completedEvent.completedAt;
+  }
+  
+  // Si completedAt est null, utiliser startDate + 2 minutes comme fallback
+  const fallbackDate = new Date(completedEvent.startDate.getTime() + 2 * 60 * 1000);
+  console.log(`⚠️ Using fallback completedAt for ${completedEvent.theme}: ${fallbackDate}`);
+  return fallbackDate;
+}
+
   //  nettoyer les événements passés
 private async cleanupPastEvents(): Promise<void> {
   try {
@@ -576,7 +606,7 @@ private async cleanupPastEvents(): Promise<void> {
         event._id,
         { 
           isCompleted: true,
-          completedAt: now,
+          completedAt: now, // 🔥 CORRECTION: Toujours définir completedAt
           nextEventCreated: false
         }
       ).exec();

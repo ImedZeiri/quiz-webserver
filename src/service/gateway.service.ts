@@ -1156,41 +1156,60 @@ private startGlobalQuiz() {
 private async completeGlobalQuiz() {
   if (!this.globalQuiz) return;
   
-  // 🔥 CORRECTION: Vérifier que globalQuiz.event existe avant de l'utiliser
   const event = this.globalQuiz.event;
   const participants = this.globalQuiz.participants;
   
-  this.cleanupGlobalQuiz();
-  
+  // 🔥 CORRECTION: Sauvegarder le gagnant AVANT de nettoyer
   let winnerSessionId: string | null = null;
   let winnerUsername: string | null = null;
   let winnerPhone: string | null = null;
 
-  // 🔥 CORRECTION: Vérifier que event existe ET que participants existe et n'est pas vide
   if (event && participants && participants.size > 0) {
-    const validParticipants = Array.from(participants.values())
-      .filter((p) => p.lastCorrectAnswerTime)
-      .sort((a, b) => a.lastCorrectAnswerTime! - b.lastCorrectAnswerTime!);
+    // 🔥 CORRECTION: Trier par score puis par temps
+    const sortedParticipants = Array.from(participants.values())
+      .filter(p => p.score > 0) // Seulement ceux qui ont marqué
+      .sort((a, b) => {
+        // D'abord par score (décroissant)
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        // Ensuite par temps (croissant - le plus rapide gagne)
+        return (a.lastCorrectAnswerTime || Infinity) - (b.lastCorrectAnswerTime || Infinity);
+      });
     
-    if (validParticipants.length > 0) {
-      winnerSessionId = validParticipants[0].clientId;
+    if (sortedParticipants.length > 0) {
+      winnerSessionId = sortedParticipants[0].clientId;
       const winnerInfo = await this.getWinnerInfo(winnerSessionId);
       winnerUsername = winnerInfo.username || null;
       winnerPhone = winnerInfo.phoneNumber || null;
 
+      console.log(`🏆 Winner determined:`, {
+        sessionId: winnerSessionId,
+        username: winnerUsername,
+        phone: winnerPhone,
+        score: sortedParticipants[0].score,
+        totalParticipants: participants.size
+      });
+
       try {
-        // 🔥 CORRECTION: Ajout d'un try/catch pour gérer les erreurs de base de données
-        if (winnerPhone) {
-          await this.eventService.completeEvent(event.id, winnerPhone);
-        } else {
-          await this.eventService.completeEvent(event.id, winnerSessionId);
-        }
-        console.log(`✅ Événement ${event.theme} complété avec gagnant: ${winnerUsername || winnerSessionId}`);
+        // 🔥 CORRECTION: Utiliser le phone comme identifiant principal
+        const winnerIdentifier = winnerPhone || winnerSessionId;
+        console.log(`💾 Saving winner to database: ${winnerIdentifier} for event ${event.id}`);
+        
+        await this.eventService.completeEvent(event.id, winnerIdentifier);
+        console.log(`✅ Event ${event.theme} completed with winner: ${winnerIdentifier}`);
       } catch (error) {
-        console.error(`❌ Erreur lors de la complétion de l'événement ${event.theme}:`, error);
-        // 🔥 CORRECTION: On continue même si la base de données échoue
+        console.error(`❌ Error completing event ${event.theme}:`, error);
+        // 🔥 CORRECTION: Essayer avec session ID si phone échoue
+        try {
+          await this.eventService.completeEvent(event.id, winnerSessionId!);
+          console.log(`✅ Event ${event.theme} completed with session ID: ${winnerSessionId}`);
+        } catch (secondError) {
+          console.error(`❌ Second attempt failed for event ${event.theme}:`, secondError);
+        }
       }
 
+      // Notifier tous les clients
       this.userSessions.forEach((session, clientId) => {
         if (this.shouldReceiveEvent(clientId, 'eventCompleted')) {
           const client = this.server?.sockets.sockets.get(clientId);
@@ -1199,35 +1218,62 @@ private async completeGlobalQuiz() {
             winner: winnerUsername || winnerSessionId,
             winnerPhone,
             winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${winnerSessionId}`,
+            winnerScore: sortedParticipants[0].score,
+            totalParticipants: participants.size
           });
         }
       });
+    } else {
+      console.log('❌ No valid winner found - all participants scored 0');
+      
+      try {
+        // Marquer l'événement comme complété sans gagnant
+        await this.eventService.completeEvent(event.id, 'no-winner');
+        console.log(`✅ Event ${event.theme} marked as completed without winner`);
+      } catch (error) {
+        console.error(`❌ Error completing event without winner:`, error);
+      }
+    }
+  } else {
+    console.log('❌ No participants or event for global quiz completion');
+    
+    if (event) {
+      try {
+        await this.eventService.completeEvent(event.id, 'no-winner');
+        console.log(`✅ Event ${event.theme} marked as completed without participants`);
+      } catch (error) {
+        console.error(`❌ Error completing event without participants:`, error);
+      }
     }
   }
 
-  // 🔥 CORRECTION: Toujours notifier les clients de la fin du quiz, même sans événement ou en cas d'erreur DB
+  // 🔥 CORRECTION: Nettoyer APRÈS avoir sauvegardé le gagnant
+  this.cleanupGlobalQuiz();
+  
+  // Notifier la fin du quiz à tous les participants
   this.quizSessions.forEach((session, clientId) => {
     const client = this.server?.sockets.sockets.get(clientId);
     if (client) {
+      const isWinner = clientId === winnerSessionId;
       client.emit('quizCompleted', {
         score: session.score,
         totalQuestions: session.questions.length,
         answers: session.answers,
         joinedAt: session.joinedAt,
         winner: winnerUsername || winnerSessionId,
-        isWinner: clientId === winnerSessionId,
+        isWinner: isWinner,
+        winnerScore: winnerSessionId ? participants?.get(winnerSessionId)?.score : 0,
+        totalParticipants: participants?.size || 0
       });
     }
   });
 
+  // Nettoyer les sessions après un délai
   setTimeout(() => {
-    if (this.server) {
-      this.server.disconnectSockets(true);
-    }
+    this.quizSessions.clear();
+    this.currentLobby = null;
+    console.log('🧹 Quiz sessions cleaned up');
   }, 5000);
-  
-  this.quizSessions.clear();
-  this.currentLobby = null;
 }
 
   private startAdBreakBeforeFinalQuestion() {
@@ -1269,81 +1315,92 @@ private async completeGlobalQuiz() {
   }
 
   private async handleFinalQuestionCorrectAnswer(clientId: string, payload: SubmitAnswerPayload) {
-    if (!this.globalQuiz) return;
-    console.log(`🏆 Première réponse correcte sur la dernière question par ${clientId}`);
+  if (!this.globalQuiz) return;
+  console.log(`🏆 Première réponse correcte sur la dernière question par ${clientId}`);
 
-    if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
-    if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
+  if (this.globalQuiz.timerInterval) clearInterval(this.globalQuiz.timerInterval);
+  if (this.globalQuiz.timer) clearTimeout(this.globalQuiz.timer);
 
-    const session = this.quizSessions.get(clientId);
-    if (session) {
-      const currentQuestion = session.questions[session.currentIndex];
-      session.score++;
-      const participant = this.globalQuiz.participants?.get(clientId);
-      if (participant) {
-        participant.score = session.score;
-        participant.finishedAt = new Date();
-        participant.lastCorrectAnswerTime = Date.now();
-        const answerData = {
-          questionId: currentQuestion.id,
-          userAnswer: payload.answer,
-          correct: true,
-          submittedAt: Date.now(),
-        };
-        session.answers.push(answerData);
-        participant.answers.push(answerData);
-      }
+  const session = this.quizSessions.get(clientId);
+  if (session) {
+    const currentQuestion = session.questions[session.currentIndex];
+    session.score++;
+    const participant = this.globalQuiz.participants?.get(clientId);
+    if (participant) {
+      participant.score = session.score;
+      participant.finishedAt = new Date();
+      participant.lastCorrectAnswerTime = Date.now();
+      const answerData = {
+        questionId: currentQuestion.id,
+        userAnswer: payload.answer,
+        correct: true,
+        submittedAt: Date.now(),
+      };
+      session.answers.push(answerData);
+      participant.answers.push(answerData);
     }
+  }
 
-    const winnerInfo = await this.getWinnerInfo(clientId);
-    const winnerUsername = winnerInfo.username || null;
-    const winnerPhone = winnerInfo.phoneNumber || null;
+  const winnerInfo = await this.getWinnerInfo(clientId);
+  const winnerUsername = winnerInfo.username || null;
+  const winnerPhone = winnerInfo.phoneNumber || null;
 
-    if (this.globalQuiz.event) {
-      if (winnerPhone) {
-        await this.eventService.completeEvent(this.globalQuiz.event.id, winnerPhone);
-      } else {
+  if (this.globalQuiz.event) {
+    try {
+      // 🔥 CORRECTION: Sauvegarder le gagnant
+      const winnerIdentifier = winnerPhone || clientId;
+      console.log(`💾 Saving immediate winner to database: ${winnerIdentifier}`);
+      
+      await this.eventService.completeEvent(this.globalQuiz.event.id, winnerIdentifier);
+      console.log(`✅ Event ${this.globalQuiz.event.theme} completed with immediate winner: ${winnerIdentifier}`);
+    } catch (error) {
+      console.error(`❌ Error completing event with immediate winner:`, error);
+      // 🔥 CORRECTION: Essayer avec session ID
+      try {
         await this.eventService.completeEvent(this.globalQuiz.event.id, clientId);
+        console.log(`✅ Event ${this.globalQuiz.event.theme} completed with session ID: ${clientId}`);
+      } catch (secondError) {
+        console.error(`❌ Second attempt failed for immediate winner:`, secondError);
       }
-
-      this.userSessions.forEach((session, sessionClientId) => {
-        if (this.shouldReceiveEvent(sessionClientId, 'immediateWinner')) {
-          const client = this.server?.sockets.sockets.get(sessionClientId);
-          client?.emit('immediateWinner', {
-            eventId: this.globalQuiz?.event?.id || '',
-            winner: winnerUsername || clientId,
-            winnerPhone,
-            winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${clientId}`,
-            message: 'Première réponse correcte sur la dernière question !',
-          });
-        }
-      });
     }
 
-    this.quizSessions.forEach((session, sessionClientId) => {
-      const client = this.server?.sockets.sockets.get(sessionClientId);
-      if (client) {
-        client.emit('quizCompleted', {
-          score: session.score,
-          totalQuestions: session.questions.length,
-          answers: session.answers,
-          joinedAt: session.joinedAt,
+    this.userSessions.forEach((session, sessionClientId) => {
+      if (this.shouldReceiveEvent(sessionClientId, 'immediateWinner')) {
+        const client = this.server?.sockets.sockets.get(sessionClientId);
+        client?.emit('immediateWinner', {
+          eventId: this.globalQuiz?.event?.id || '',
           winner: winnerUsername || clientId,
-          isWinner: sessionClientId === clientId,
-          immediateWin: true,
+          winnerPhone,
+          winnerDisplay: winnerUsername ? `🏆 ${winnerUsername}` : `Session: ${clientId}`,
+          message: 'Première réponse correcte sur la dernière question !',
         });
       }
     });
+  }
 
-    setTimeout(() => {
-      if (this.server) {
-        this.server.disconnectSockets(true);
-      }
-    }, 5000);
+  this.quizSessions.forEach((session, sessionClientId) => {
+    const client = this.server?.sockets.sockets.get(sessionClientId);
+    if (client) {
+      client.emit('quizCompleted', {
+        score: session.score,
+        totalQuestions: session.questions.length,
+        answers: session.answers,
+        joinedAt: session.joinedAt,
+        winner: winnerUsername || clientId,
+        isWinner: sessionClientId === clientId,
+        immediateWin: true,
+      });
+    }
+  });
+
+  // 🔥 CORRECTION: Nettoyer après un délai
+  setTimeout(() => {
     this.globalQuiz = null;
     this.quizSessions.clear();
     this.currentLobby = null;
-  }
+    console.log('🧹 Immediate win sessions cleaned up');
+  }, 5000);
+}
 
   // ======================
   // CONNECTION / DISCONNECTION

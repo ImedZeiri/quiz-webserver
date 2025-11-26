@@ -49,10 +49,11 @@ export class EventController {
     return this.eventService.getEventsReadyForLobby();
   }
 
-  @Get('in-lobby-window')
-  async getEventsInLobbyWindow(): Promise<Event[]> {
-    return this.eventService.getEventsInLobbyWindow();
-  }
+  // 🔥 SUPPRESSION: Cette méthode n'existe pas dans EventService
+  // @Get('in-lobby-window')
+  // async getEventsInLobbyWindow(): Promise<Event[]> {
+  //   return this.eventService.getEventsInLobbyWindow();
+  // }
 
   @Post('force-lobby-check')
   async forceLobbyCheck(): Promise<{ message: string; timestamp: string }> {
@@ -79,7 +80,7 @@ export class EventController {
       normalized.startDate = new Date(updates.startDate as any);
     }
 
-  /*   console.log(`📝 Mise à jour de l'événement ${id} avec:`, normalized); */
+    /*   console.log(`📝 Mise à jour de l'événement ${id} avec:`, normalized); */
 
     // Les hooks MongoDB se chargeront automatiquement de la notification
     const result = await this.eventService.updateEvent(id, normalized);
